@@ -25,6 +25,14 @@ JNIEXPORT void JNICALL Java_org_broad_igv_d4_D4FileParser_d4_1close
 
 /*
  * Class:     org_broad_igv_d4_D4FileParser
+ * Method:    d4_chrom_name
+ * Signature: (J)[Ljava/lang/String;
+ */
+JNIEXPORT jobjectArray JNICALL Java_org_broad_igv_d4_D4FileParser_d4_1chrom_1name
+  (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     org_broad_igv_d4_D4FileParser
  * Method:    d4_run_stat
  * Signature: (JILjava/lang/String;III)J
  */
@@ -61,6 +69,22 @@ JNIEXPORT jint JNICALL Java_org_broad_igv_d4_D4FileParser_d4_1stat_1get_1begin
  * Signature: (JI)I
  */
 JNIEXPORT jint JNICALL Java_org_broad_igv_d4_D4FileParser_d4_1stat_1get_1end
+  (JNIEnv *, jclass, jlong, jint);
+
+/*
+ * Class:     org_broad_igv_d4_D4FileParser
+ * Method:    d4_stat_get_max
+ * Signature: (JI)I
+ */
+JNIEXPORT jint JNICALL Java_org_broad_igv_d4_D4FileParser_d4_1stat_1get_1max
+  (JNIEnv *, jclass, jlong, jint);
+
+/*
+ * Class:     org_broad_igv_d4_D4FileParser
+ * Method:    d4_stat_get_min
+ * Signature: (JI)I
+ */
+JNIEXPORT jint JNICALL Java_org_broad_igv_d4_D4FileParser_d4_1stat_1get_1min
   (JNIEnv *, jclass, jlong, jint);
 
 /*

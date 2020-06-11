@@ -9,7 +9,7 @@ libd4-igv.so: D4FileParser.cpp D4FileParser.h
 		-L. -ld4binding
 d4-igv-test: D4FileParser.cpp 
 	$(CC) -o $@ \
-		-g \
+		-g -O3 \
 		-I . -I dummy \
 		-D TEST_MAIN \
 		$^ \

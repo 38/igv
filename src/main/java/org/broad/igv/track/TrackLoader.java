@@ -206,10 +206,8 @@ public class TrackLoader {
             } else if (typeString.endsWith("clusters")) {
                 loadClusterFile(locator, newTracks, genome);
             }  else if (typeString.endsWith(".d4")) {
-                //TODO: loadD4File
-                System.out.println("D4 File!");
                 D4FileParser datasource = new D4FileParser(locator.getPath(), genome);
-                DataSourceTrack track = new DataSourceTrack(locator, "D4", "Depth", datasource);
+                DataSourceTrack track = new DataSourceTrack(locator, "D4:" + locator.getFileName(), locator.getFileName(), datasource);
                 newTracks.add(track);
             } else if (CodecFactory.hasCodec(locator, genome) && !forceNotTribble(typeString)) {
                 loadTribbleFile(locator, newTracks, genome);
