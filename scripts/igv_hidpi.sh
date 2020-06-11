@@ -16,9 +16,12 @@ else
     echo "Using system JDK."
 fi
 
+export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${prefix}
+
 exec java -showversion --module-path="${prefix}/lib" -Xmx4g \
     @"${prefix}/igv.args" \
     -Dsun.java2d.uiScale=2 \
     -Dapple.laf.useScreenMenuBar=true \
     -Djava.net.preferIPv4Stack=true \
+	-Djava.library.path=${prefix} \
     --module=org.igv/org.broad.igv.ui.Main "$@"

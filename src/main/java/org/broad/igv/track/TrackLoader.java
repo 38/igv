@@ -33,6 +33,7 @@ import org.broad.igv.bbfile.BBFileReader;
 import org.broad.igv.bigwig.BigWigDataSource;
 import org.broad.igv.blast.BlastMapping;
 import org.broad.igv.blast.BlastParser;
+import org.broad.igv.d4.D4FileParser;
 import org.broad.igv.data.*;
 import org.broad.igv.data.cufflinks.*;
 import org.broad.igv.data.expression.ExpressionDataset;
@@ -204,6 +205,12 @@ public class TrackLoader {
                 loadBedPEFile(locator, newTracks, genome);
             } else if (typeString.endsWith("clusters")) {
                 loadClusterFile(locator, newTracks, genome);
+            }  else if (typeString.endsWith(".d4")) {
+                //TODO: loadD4File
+                System.out.println("D4 File!");
+                D4FileParser datasource = new D4FileParser(locator.getPath(), genome);
+                DataSourceTrack track = new DataSourceTrack(locator, "D4", "Depth", datasource);
+                newTracks.add(track);
             } else if (CodecFactory.hasCodec(locator, genome) && !forceNotTribble(typeString)) {
                 loadTribbleFile(locator, newTracks, genome);
             } else if (MutationTrackLoader.isMutationAnnotationFile(locator)) {
