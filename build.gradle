@@ -231,6 +231,7 @@ task createDist(type: Copy, dependsOn: jar)  {
     }
 	from ("d4lib") {
 		include '*.so'
+		include '*.dylib'
 	}
     with copySpec {
         from ("${buildDir}/libs")

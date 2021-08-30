@@ -1,5 +1,17 @@
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+	D4BINDING = libd4binding.so
+endif
+ifeq ($(UNAME_S),Darwin)
+	D4BINDING = libd4binding.dylib
+endif
+
 all: libd4-igv.so d4-igv-test
-libd4-igv.so: D4FileParser.cpp D4FileParser.h
+$(D4BINDING):
+	cd d4-format && \
+		cargo build --package=d4binding --release && \
+		ln target/release/$@ ../
+libd4-igv.so: D4FileParser.cpp D4FileParser.h libd4binding.so
 	$(CC) -o $@ \
 		--shared  \
 		-fPIC \

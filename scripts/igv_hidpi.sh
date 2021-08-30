@@ -17,6 +17,7 @@ else
 fi
 
 export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${prefix}
+export DYLD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${prefix}
 
 exec java -showversion --module-path="${prefix}/lib" -Xmx4g \
     @"${prefix}/igv.args" \
