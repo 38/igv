@@ -22,5 +22,13 @@ jobs:
     - uses: actions/checkout@v2
       with:
         submodules: recursive
-    - name: Build
+    - name: Build Rust
       run: cd d4lib && make
+    - name: Build Java
+      run: ./gradlew createDist
+    - name: Pack Artifact
+      run: cd build/ && tar czvf igv-d4.tar.gz IGV-dist/
+    - uses: actions/upload-artifact@v2
+      with:
+        name: igv-d4.tar.gz
+        path: igv-d4.tar.gz

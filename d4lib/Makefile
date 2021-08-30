@@ -12,7 +12,7 @@ ifeq ($(UNAME_S),Darwin)
 	OS_NAME=darwin
 endif
 
-all: $(JNILIB) d4-igv-test
+all: $(JNILIB)
 $(D4BINDING):
 	cd d4-format && \
 		cargo build --package=d4binding --release && \
