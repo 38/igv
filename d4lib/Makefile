@@ -2,10 +2,14 @@ UNAME_S := $(shell uname -s || echo Darwin)
 ifeq ($(UNAME_S),Linux)
 	D4BINDING = libd4binding.so
 	JNILIB = libd4-igv.so
+	JAVA_HOME=$(shell sh ./java-home.sh)
+	OS_NAME=linux
 endif
 ifeq ($(UNAME_S),Darwin)
 	D4BINDING = libd4binding.dylib
 	JNILIB = libd4-igv.dylib
+	JAVA_HOME=$(shell sh ./java-home.sh)
+	OS_NAME=darwin
 endif
 
 all: $(JNILIB) d4-igv-test
@@ -18,7 +22,7 @@ $(JNILIB): D4FileParser.cpp D4FileParser.h $(D4BINDING)
 		--shared  \
 		-fPIC \
 		-O3 \
-		-I . -I /usr/lib/jvm/java-11-openjdk-amd64/include -I /usr/lib/jvm/java-11-openjdk-amd64/include/linux/ \
+		-I . -I $(JAVA_HOME)/include -I $(JAVA_HOME)/include/$(OS_NAME)\
 		$< \
 		-L. -ld4binding
 d4-igv-test: D4FileParser.cpp 
