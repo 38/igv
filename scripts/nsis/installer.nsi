@@ -1,11 +1,11 @@
 Name "IGV"
 
-OutFile "IGV_Win_@VERSION@-installer.exe"
+OutFile "IGV_Win_@VERSION@@JVM_INCL@-installer.exe"
 InstallDir "$PROGRAMFILES64\IGV_@VERSION@"
 
 ShowInstDetails nevershow
 ShowUninstDetails nevershow
-SetCompressor /solid lzma
+SetCompressor lzma
 AutoCloseWindow true
 Icon "IGV_@VERSION@\IGV_64.ico"
 LicenseData license_win.txt

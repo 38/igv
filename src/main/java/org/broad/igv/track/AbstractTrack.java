@@ -32,6 +32,7 @@ import org.apache.log4j.Logger;
 import org.broad.igv.Globals;
 import org.broad.igv.event.IGVEventBus;
 import org.broad.igv.event.IGVEventObserver;
+import org.broad.igv.prefs.Constants;
 import org.broad.igv.prefs.PreferencesManager;
 import org.broad.igv.renderer.*;
 import org.broad.igv.session.SessionAttribute;
@@ -52,8 +53,8 @@ import org.w3c.dom.NodeList;
 
 import java.awt.*;
 import java.awt.event.MouseEvent;
-import java.util.*;
 import java.util.List;
+import java.util.*;
 
 import static org.broad.igv.prefs.Constants.*;
 
@@ -67,6 +68,7 @@ public abstract class AbstractTrack implements Track {
     public static final DisplayMode DEFAULT_DISPLAY_MODE = DisplayMode.COLLAPSED;
     public static final int DEFAULT_HEIGHT = -1;
     public static final int VISIBILITY_WINDOW = -1;
+    public static final boolean DEFAULT_SHOW_FEATURE_NAMES = true;
     private static Logger log = Logger.getLogger(AbstractTrack.class);
 
     /**
@@ -137,8 +139,8 @@ public abstract class AbstractTrack implements Track {
 
     String autoscaleGroup;
 
-    protected Color posColor = DEFAULT_COLOR;
-    protected Color altColor = posColor;
+    protected Color posColor = null;
+    protected Color altColor = null;
 
     protected int visibilityWindow = VISIBILITY_WINDOW;
     private DisplayMode displayMode = DEFAULT_DISPLAY_MODE;
@@ -146,6 +148,7 @@ public abstract class AbstractTrack implements Track {
     protected Integer height = DEFAULT_HEIGHT;
 
     protected DataRange dataRange;
+    private boolean showFeatureNames = DEFAULT_SHOW_FEATURE_NAMES;
 
     public AbstractTrack() {
     }
@@ -302,12 +305,19 @@ public abstract class AbstractTrack implements Track {
 
 
     public Color getColor() {
+        return posColor == null ? DEFAULT_COLOR : posColor;
+    }
+
+    public Color getExplicitColor() {
         return posColor;
     }
 
     public Color getAltColor() {
-        return altColor;
+        return altColor == null ? getColor() : altColor;
+    }
 
+    public Color getExplicitAltColor() {
+        return altColor;
     }
 
     public ResourceLocator getResourceLocator() {
@@ -434,7 +444,6 @@ public abstract class AbstractTrack implements Track {
         }
     }
 
-
     public void setMinimumHeight(int minimumHeight) {
         this.minimumHeight = minimumHeight;
     }
@@ -442,7 +451,6 @@ public abstract class AbstractTrack implements Track {
     public void setMaximumHeight(int maximumHeight) {
         this.maximumHeight = maximumHeight;
     }
-
 
     /**
      * Return the actual minimum height if one has been set, otherwise get the default for the current renderer.
@@ -460,7 +468,6 @@ public abstract class AbstractTrack implements Track {
     public void setTrackType(TrackType type) {
         this.trackType = type;
     }
-
 
     public TrackType getTrackType() {
         return trackType;
@@ -487,11 +494,9 @@ public abstract class AbstractTrack implements Track {
         this.posColor = color;
     }
 
-
     public void setAltColor(Color color) {
         altColor = color;
     }
-
 
     public void setVisible(boolean visible) {
         if (this.visible != visible) {
@@ -500,21 +505,17 @@ public abstract class AbstractTrack implements Track {
         }
     }
 
-
     public void setOverlayed(boolean bool) {
         this.overlaid = bool;
     }
-
 
     public void setSelected(boolean selected) {
         this.selected = selected;
     }
 
-
     public boolean isSelected() {
         return selected;
     }
-
 
     public void setHeight(int height) {
         setHeight(height, false);
@@ -584,16 +585,15 @@ public abstract class AbstractTrack implements Track {
         String popupText = getValueStringAt(frame.getChrName(), e.getChromosomePosition(), e.getMouseEvent().getX(), e.getMouseEvent().getY(), frame);
 
         if (popupText != null) {
+            Color color = IGV.getRootPane().getJMenuBar().getForeground();
+            String htmlColor = String.format("#%02x%02x%02x", color.getRed(), color.getGreen(), color.getBlue()); 
+            popupText = "<div style=\"color: " + htmlColor + "\">" + popupText + "</div>";
 
             final TooltipTextFrame tf = new TooltipTextFrame(getName(), popupText);
             Point p = me.getComponent().getLocationOnScreen();
             tf.setLocation(Math.max(0, p.x + me.getX() - 150), Math.max(0, p.y + me.getY() - 150));
 
-            UIUtilities.invokeOnEventThread(new Runnable() {
-                public void run() {
-                    tf.setVisible(true);
-                }
-            });
+            UIUtilities.invokeOnEventThread(() -> tf.setVisible(true));
             return true;
         }
         return false;
@@ -768,7 +768,7 @@ public abstract class AbstractTrack implements Track {
             } else {
                 colorScale = new ContinuousColorScale(min, max, minColor, c);
             }
-            colorScale.setNoDataColor(UIConstants.NO_DATA_COLOR);
+            colorScale.setNoDataColor(PreferencesManager.getPreferences().getAsColor(Constants.NO_DATA_COLOR));
         }
         return colorScale;
     }
@@ -826,22 +826,12 @@ public abstract class AbstractTrack implements Track {
         return null;
     }
 
-    /**
-     * Special normalization function for linear (non logged) copy number data
-     *
-     * @param value
-     * @param norm
-     * @return
-     */
-    public static float getLogNormalizedValue(float value, double norm) {
-        if (norm == 0) {
-            return Float.NaN;
-        } else {
-            return (float) (Math.log(Math.max(Float.MIN_VALUE, value) / norm) / Globals.log2);
-        }
-    }
 
     public float logScaleData(float dataY) {
+
+        if (Float.isNaN(dataY)) {
+            return dataY;
+        }
 
         // Special case for copy # -- centers data around 2 copies (1 for allele
         // specific) and log normalizes
@@ -852,11 +842,10 @@ public abstract class AbstractTrack implements Track {
             double centerValue = (getTrackType() == TrackType.ALLELE_SPECIFIC_COPY_NUMBER)
                     ? 1.0 : 2.0;
 
-            dataY = getLogNormalizedValue(dataY, centerValue);
+            return (float) (Math.log(Math.max(Float.MIN_VALUE, dataY) / centerValue) / Globals.log2);
+        } else {
+            return dataY;
         }
-
-
-        return dataY;
     }
 
     public boolean isRegionScoreType(RegionScoreType type) {
@@ -1006,10 +995,13 @@ public abstract class AbstractTrack implements Track {
         element.setAttribute("fontSize", String.valueOf(fontSize));
         element.setAttribute("visible", String.valueOf(visible));
 
-        if (posColor != DEFAULT_COLOR) {
+        if (showFeatureNames != DEFAULT_SHOW_FEATURE_NAMES) {
+            element.setAttribute("showFeatureNames", Boolean.toString(showFeatureNames));
+        }
+        if (posColor != null) {
             element.setAttribute(SessionAttribute.COLOR, ColorUtilities.colorToString(posColor));
         }
-        if (altColor != DEFAULT_COLOR) {
+        if (altColor != null) {
             element.setAttribute(SessionAttribute.ALT_COLOR, ColorUtilities.colorToString(altColor));
         }
 
@@ -1034,7 +1026,7 @@ public abstract class AbstractTrack implements Track {
             element.setAttribute("height", String.valueOf(this.height));
         }
 
-        if(showDataRange == false) {
+        if (showDataRange == false) {
             element.setAttribute("showDataRange", Boolean.toString(showDataRange));
         }
 
@@ -1045,13 +1037,22 @@ public abstract class AbstractTrack implements Track {
 
             element.setAttribute("autoScale", String.valueOf(this.autoScale));
 
-            if(this.getWindowFunction() != null) {
+            if (this.getWindowFunction() != null) {
                 element.setAttribute("windowFunction", String.valueOf(this.getWindowFunction()));
             }
         }
 
     }
 
+
+    public void setShowFeatureNames(boolean b) {
+        this.showFeatureNames = b;
+    }
+
+    @Override
+    public boolean isShowFeatureNames() {
+        return showFeatureNames;
+    }
 
     /**
      * Restore track from XML serialization -- work in progress
@@ -1063,10 +1064,15 @@ public abstract class AbstractTrack implements Track {
     @Override
     public void unmarshalXML(Element element, Integer version) {
 
-        this.name = element.getAttribute("name");
-        this.id = element.getAttribute("id");
+        if (element.hasAttribute("name")) {
+            this.name = element.getAttribute("name");
+        }
 
-        if(element.hasAttribute("attributeKey")) {
+        if (element.hasAttribute("id")) {
+            this.id = element.getAttribute("id");
+        }
+
+        if (element.hasAttribute("attributeKey")) {
             this.attributeKey = element.getAttribute("attributeKey");
         } else {
             this.attributeKey = this.name;
@@ -1085,7 +1091,6 @@ public abstract class AbstractTrack implements Track {
             try {
                 Color c = ColorUtilities.stringToColor(element.getAttribute("color"));
                 this.posColor = c;
-                this.altColor = c;  // default
             } catch (Exception e) {
                 log.error("Unrecognized color: " + element.getAttribute("color"));
             }
@@ -1143,6 +1148,15 @@ public abstract class AbstractTrack implements Track {
             } catch (NumberFormatException e) {
                 log.error("Unrecognized featureVisibilityWindow: " + element.getAttribute("featureVisibilityWindow"));
             }
+        }
+
+        if (element.hasAttribute("showFeatureNames")) {
+            try {
+                this.showFeatureNames = Boolean.valueOf(element.getAttribute("showFeatureNames"));
+            } catch (Exception e) {
+                log.error("Unrecognized showDataRange: " + element.getAttribute("showFeatureNames"));
+            }
+
         }
 
         if (element.hasAttribute("fontSize")) {

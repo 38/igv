@@ -53,10 +53,9 @@ import org.broad.igv.exceptions.DataLoadException;
 import org.broad.igv.feature.FeatureFileUtils;
 import org.broad.igv.feature.GFFParser;
 import org.broad.igv.feature.Mutation;
-import org.broad.igv.feature.genome.Genome;
-import org.broad.igv.feature.genome.GenomeDescriptor;
-import org.broad.igv.feature.genome.GenomeManager;
+import org.broad.igv.feature.genome.*;
 import org.broad.igv.feature.genome.fasta.FastaUtils;
+import org.broad.igv.feature.genome.load.GenomeDescriptor;
 import org.broad.igv.feature.tribble.CodecFactory;
 import org.broad.igv.feature.tribble.GFFCodec;
 import org.broad.igv.feature.tribble.IGVBEDCodec;
@@ -660,7 +659,7 @@ public class IgvTools {
         }
 
         ResourceLocator locator = new ResourceLocator(ifile);
-        locator.setType(typeString);
+        locator.setFormat(typeString);
         GCTtoIGVConverter.convert(locator, ofile, probefile, maxRecords, tmpDir, genome);
 
     }
@@ -671,16 +670,16 @@ public class IgvTools {
 
         if (!ifile.endsWith(".affective.csv")) validateIsTilable(typeString);
 
-        log.info("toTDF.  File = " + ifile);
-        log.info("Max zoom = " + maxZoomValue);
-        if (probeFile != null && probeFile.trim().length() > 0) {
-            log.info("Probe file = " + probeFile);
-        }
-        String wfString = "Window functions: ";
-        for (WindowFunction wf : windowFunctions) {
-            wfString += wf.toString() + " ";
-        }
-        log.info(wfString);
+//        log.info("toTDF.  File = " + ifile);
+//        log.info("Max zoom = " + maxZoomValue);
+//        if (probeFile != null && probeFile.trim().length() > 0) {
+//            log.info("Probe file = " + probeFile);
+//        }
+//        String wfString = "Window functions: ";
+//        for (WindowFunction wf : windowFunctions) {
+//            wfString += wf.toString() + " ";
+//        }
+//        log.info(wfString);
 
         boolean isGCT = isGCT(typeString);
         Genome genome = loadGenome(genomeId);
@@ -835,15 +834,15 @@ public class IgvTools {
                         String trackLine, String queryString, int minMapQuality, int countFlags) throws IOException {
 
 
-        log.info("Computing coverage.  File = " + ifile);
-        log.info("Max zoom = " + maxZoomValue);
-        log.info("Window size = " + windowSizeValue);
-        String wfString = "Window functions: ";
-        for (WindowFunction wf : windowFunctions) {
-            wfString += wf.toString() + " ";
-        }
-        log.info(wfString);
-        log.info("Ext factor = " + extFactorValue);
+//        log.info("Computing coverage.  File = " + ifile);
+//        log.info("Max zoom = " + maxZoomValue);
+//        log.info("Window size = " + windowSizeValue);
+//        String wfString = "Window functions: ";
+//        for (WindowFunction wf : windowFunctions) {
+//            wfString += wf.toString() + " ";
+//        }
+//        log.info(wfString);
+//        log.info("Ext factor = " + extFactorValue);
 
 
         Genome genome = loadGenome(genomeId);
@@ -1024,7 +1023,7 @@ public class IgvTools {
         while(iter.hasNext()) {
             SAMRecord rec = iter.next();
             if (++totalRecords % 1000000 == 0) {
-                if (null != log) log.info(totalRecords + " reads processed ...");
+                System.out.println(totalRecords + " reads processed ...");
             }
             indexer.processAlignment(rec);
         }
@@ -1165,11 +1164,11 @@ public class IgvTools {
 
         File genomeFile = new File(genomeFileOrID);
         if (!genomeFile.exists()) {
-            genomeFile = new File(rootDir, "genomes" + File.separator + genomeFileOrID + ".genome");
-
+            String pre = genomeFileOrID.replace("/", "_");
+            genomeFile = new File(rootDir, "genomes" + File.separator + pre + ".chrom.sizes");
         }
         if (!genomeFile.exists()) {
-            genomeFile = new File(rootDir, "genomes" + File.separator + genomeFileOrID + ".chrom.sizes");
+            genomeFile = new File(rootDir, "genomes" + File.separator + genomeFileOrID + ".genome");
         }
         if (!genomeFile.exists()) {
             genomeFile = new File(rootDir, "genomes" + File.separator + genomeFileOrID);
@@ -1183,7 +1182,7 @@ public class IgvTools {
         //TODO Prevents loading genome again if loading from path.
         //May or may not want this, for now we just use it for testing
         if (Globals.isTesting() && genomeFile.getAbsolutePath().endsWith(".genome")) {
-            GenomeDescriptor genomeDescriptor = GenomeManager.parseGenomeArchiveFile(genomeFile);
+            GenomeDescriptor genomeDescriptor = GenomeDescriptor.parseGenomeArchiveFile(genomeFile);
             if (genome != null && genomeDescriptor.getId().equals(genome.getId())) {
                 return genome;
             }

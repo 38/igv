@@ -44,13 +44,13 @@ public class GenomeUtils {
 
     public static void main(String[] args) throws IOException {
 
-        String genomeListFile = args.length > 0 ? args[0] : "genomes/genomes.txt";
-        //String outputDirectory = args.length > 1 ? args[1] : "genomes/sizes";
-        String outputFile = args.length > 1 ? args[1] : "nonFastas.txt";
+        String genomeListFile =  "genomes/genomes.tab";
+        String outputDirectory = "genomes/sizes";
+        String outputFile = "nonFastas.txt";
 
-        // updateChromSizes(genomeListFile, new File(outputDirectory));
+        updateChromSizes(genomeListFile, new File(outputDirectory));
 
-        findNonFastas(genomeListFile, new File(outputFile));
+        //findNonFastas(genomeListFile, new File(outputFile));
 
 //        mergeINCDCNames(
 //                new File("genomes/alias/hg38_alias.tab"),
@@ -82,8 +82,8 @@ public class GenomeUtils {
                 String[] tokens = nextLine.split("\t");
                 if (tokens.length > 2) {
                     String genomeID = tokens[2];
-
-                    File outputFile = new File(directory, genomeID + ".chrom.sizes");
+                    String pre = genomeID.replace("/", "_");
+                    File outputFile = new File(directory, pre + ".chrom.sizes");
                     if (outputFile.exists()) {
                         continue;
                     }
@@ -92,6 +92,7 @@ public class GenomeUtils {
                     String genomePath = tokens[1];
                     try {
                         Genome genome = GenomeManager.getInstance().loadGenome(genomePath, null);
+                        System.out.println(genome.getId());
                         exportChromSizes(directory, genome);
 
                     } catch (Exception e) {
@@ -99,6 +100,7 @@ public class GenomeUtils {
                     }
                 }
             }
+            System.out.println("Done");
         } finally {
             if (br != null) br.close();
         }
@@ -115,8 +117,8 @@ public class GenomeUtils {
      */
     public static void exportChromSizes(File directory, Genome genome) throws FileNotFoundException {
 
-
-        String fn = genome.getId() + ".chrom.sizes";
+        String pre = genome.getId().replace("/", "_");
+        String fn = pre + ".chrom.sizes";
         File file = new File(directory, fn);
         PrintWriter pw = null;
 
@@ -221,49 +223,5 @@ public class GenomeUtils {
 
     }
 
-
-
-    public static void findNonFastas(String genomeListPath, File outputFile) throws IOException {
-
-        // http://igv.broadinstitute.org/genomes/genomes.txt
-        // <Server-Side Genome List>
-        // Human hg19	http://igv.broadinstitute.org/genomes/hg19.genome	hg19
-        BufferedReader br = null;
-        PrintWriter pw = null;
-
-        try {
-            pw = new PrintWriter(new BufferedWriter(new FileWriter(outputFile)));
-            br = ParsingUtils.openBufferedReader(genomeListPath);
-            String nextLine;
-            while ((nextLine = br.readLine()) != null) {
-                String[] tokens = nextLine.split("\t");
-                if (tokens.length > 2) {
-
-                    String genomeID = tokens[2];
-                    String genomePath = tokens[1];
-                    try {
-                        Genome genome = GenomeManager.getInstance().loadGenome(genomePath, null);
-
-                        if (!genome.sequenceIsFasta()) {
-
-//                            File outputFile = new File(directory, genomeID + ".fa");
-//                            if (outputFile.exists()) {
-//                                continue;
-//                            }
-
-                            pw.println("Updating " + genomeID);
-                        }
-
-                    } catch (Exception e) {
-                        System.err.println(e.toString());
-                    }
-                }
-            }
-        } finally {
-            if (br != null) br.close();
-            if(pw != null) pw.close();
-        }
-
-    }
 
 }

@@ -46,11 +46,6 @@ public class Globals {
     final static public String HISTORY_DELIMITER = ";";
     public static final String DEFAULT_GENOME = "hg19";
 
-    // External resoure URLs
-    public static final String DEFAULT_GENOME_URL = "http://igv.broadinstitute.org/genomes/genomes.txt";
-    public static final String DEFAULT_DATA_URL = "https://data.broadinstitute.org/igvdata/$$_dataServerRegistry.txt";
-
-
     public static final String CHR_ALL = "All";
     public static final String TRACK_NAME_ATTRIBUTE = "NAME";
     public static final String TRACK_DATA_FILE_ATTRIBUTE = "DATA FILE";
@@ -79,6 +74,7 @@ public class Globals {
 
     final static public Pattern commaPattern = Pattern.compile(",");
     final static public Pattern tabPattern = Pattern.compile("\t");
+    final static public Pattern multiTabPattern = Pattern.compile("\t+");
     final static public Pattern colonPattern = Pattern.compile(":");
     final static public Pattern dashPattern = Pattern.compile("-");
     final static public Pattern equalPattern = Pattern.compile("=");
@@ -123,7 +119,7 @@ public class Globals {
         Properties properties = new Properties();
         try {
             properties.load(Globals.class.getResourceAsStream("/resources/about.properties"));
-        } catch (IOException e) {
+        } catch (Exception e) {
             log.error("*** Error retrieving version and build information! ***", e);
         }
         VERSION = properties.getProperty("version", "???");
@@ -138,7 +134,6 @@ public class Globals {
         if(development){
             log.warn("Development mode is enabled");
         }
-
     }
 
     public static void setHeadless(boolean bool) {

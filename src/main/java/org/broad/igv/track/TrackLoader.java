@@ -40,19 +40,17 @@ import org.broad.igv.data.expression.ExpressionDataset;
 import org.broad.igv.data.expression.ExpressionFileParser;
 import org.broad.igv.data.seg.*;
 import org.broad.igv.exceptions.DataLoadException;
-import org.broad.igv.feature.BasePairFileUtils;
-import org.broad.igv.feature.GisticFileParser;
-import org.broad.igv.feature.MutationTrackLoader;
-import org.broad.igv.feature.ShapeFileUtils;
+import org.broad.igv.feature.*;
 import org.broad.igv.feature.basepair.BasePairTrack;
 import org.broad.igv.bedpe.BedPEParser;
 import org.broad.igv.bedpe.InteractionTrack;
 import org.broad.igv.feature.bionano.SMAPParser;
 import org.broad.igv.feature.bionano.SMAPRenderer;
+import org.broad.igv.feature.cyto.CytobandTrack;
 import org.broad.igv.feature.dranger.DRangerParser;
 import org.broad.igv.feature.dsi.DSIRenderer;
 import org.broad.igv.feature.dsi.DSITrack;
-import org.broad.igv.feature.genome.GenbankParser;
+import org.broad.igv.feature.genome.load.GenbankParser;
 import org.broad.igv.feature.genome.Genome;
 import org.broad.igv.feature.genome.GenomeManager;
 import org.broad.igv.feature.gff.GFFFeatureSource;
@@ -64,9 +62,10 @@ import org.broad.igv.feature.tribble.GFFCodec;
 import org.broad.igv.feature.tribble.TribbleIndexNotFoundException;
 import org.broad.igv.goby.GobyAlignmentQueryReader;
 import org.broad.igv.goby.GobyCountArchiveDataSource;
-import org.broad.igv.google.Ga4ghAPIHelper;
 import org.broad.igv.google.GoogleUtils;
 import org.broad.igv.gwas.*;
+import org.broad.igv.htsget.HtsgetUtils;
+import org.broad.igv.htsget.HtsgetVariantSource;
 import org.broad.igv.lists.GeneList;
 import org.broad.igv.lists.GeneListManager;
 import org.broad.igv.maf.MultipleAlignmentTrack;
@@ -88,7 +87,9 @@ import org.broad.igv.util.*;
 import org.broad.igv.variant.VariantTrack;
 import org.broad.igv.variant.util.PedigreeUtils;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.StringReader;
 import java.util.*;
 
 import static org.broad.igv.prefs.Constants.*;
@@ -122,9 +123,9 @@ public class TrackLoader {
 
         log.info("Loading resource, path " + path);
         try {
-            String typeString = locator.getTypeString();
+            String format = locator.getFormat();
 
-            if (typeString.endsWith(".tbi")) {
+            if (format.equals("tbi")) {
                 MessageUtils.showMessage("<html><b>Error:</b>File type '.tbi' is not recognized.  If this is a 'tabix' index <br>" +
                         " load the associated gzipped file, which should have an extension of '.gz'");
             }
@@ -132,96 +133,116 @@ public class TrackLoader {
             //This list will hold all new tracks created for this locator
             List<Track> newTracks = new ArrayList<Track>();
 
-            if (typeString.endsWith(".gmt")) {
+            if (locator.isHtsget()) {
+                tryHtsget(locator, newTracks, genome);
+            } else if (format.equals("gmt")) {
                 loadGMT(locator);
-            } else if (typeString.endsWith(".vcf.list")) {
+            } else if (format.equals("vcf.list")) {
                 loadVCFListFile(locator, newTracks, genome);
-            } else if (typeString.endsWith(".trio")) {
+            } else if (format.equals("trio")) {
                 loadTrioData(locator);
-            } else if (typeString.endsWith(".gct") || typeString.endsWith("res") || typeString.endsWith("tab")) {
+            } else if (format.equals("gct") || format.equals("res") || format.equals("tab")) {
                 loadGctFile(locator, newTracks, genome);
-            } else if (typeString.endsWith(".gbk") || typeString.endsWith(".gb")) {
+            } else if (format.equals("gbk") || format.equals("gb")) {
                 loadGbkFile(locator, newTracks, genome);
-            } else if (typeString.endsWith(".cn") || typeString.endsWith(".xcn") || typeString.endsWith(".snp") ||
-                    typeString.endsWith(".igv") || typeString.endsWith(".loh")) {
+            } else if (format.equals("cn") || format.equals("xcn") || format.equals("snp") ||
+                    format.equals("igv") || format.equals("loh")) {
                 loadIGVFile(locator, newTracks, genome);
-            } else if (typeString.endsWith(".cbs") || typeString.endsWith(".seg") ||
-                    typeString.endsWith("glad") || typeString.endsWith("birdseye_canary_calls")
-                    || typeString.endsWith(".seg.zip")) {
+            } else if (format.equals("cbs") || format.equals("seg") ||
+                    format.equals("glad") || format.equals("birdseye_canary_calls")
+                    || format.equals("seg.zip")) {
                 loadSegFile(locator, newTracks, genome);
-            } else if (typeString.endsWith(".gistic")) {
+            } else if (format.equals("gistic")) {
                 loadGisticFile(locator, newTracks);
-            } else if (typeString.contains(".tabblastn") || typeString.endsWith(".orthologs")) {
+            } else if (format.contains(".tabblastn") || format.equals("orthologs")) {
                 loadBlastMapping(locator, newTracks);
-            } else if (isAlignmentTrack(typeString) ||
+            } else if (isAlignmentTrack(format) ||
                     (path.startsWith("http") && path.contains("/query.cgi?"))) {
                 loadAlignmentsTrack(locator, newTracks, genome);
-            } else if (typeString.endsWith(".shape") || typeString.endsWith(".map")) {
+            } else if (format.equals("shape") || format.equals("map")) {
                 convertLoadShapeFile(locator, newTracks, genome);
-            } else if (typeString.endsWith(".wig") || typeString.endsWith(".bedgraph") || typeString.endsWith(".bdg") ||
-                    typeString.endsWith("cpg.txt") || typeString.endsWith(".expr")) {
+            } else if (format.equals("wig") || format.equals("bedgraph") || format.equals("bdg") ||
+                    format.equals("cpg") || format.equals("expr")) {
                 loadWigFile(locator, newTracks, genome);
-            } else if (typeString.endsWith("fpkm_tracking") || typeString.endsWith("gene_exp.diff") ||
-                    typeString.endsWith("cds_exp.diff")) {
+            } else if (format.equals("fpkm_tracking") || format.equals("gene_exp.diff") ||
+                    format.equals("cds_exp.diff")) {
                 loadCufflinksFile(locator, newTracks, genome);
-            } else if (typeString.contains(".dranger")) {
+            } else if (format.contains(".dranger")) {
                 loadDRangerFile(locator, newTracks, genome);
-            } else if (typeString.endsWith(".ewig.tdf") || (typeString.endsWith(".ewig.ibf"))) {
+            } else if (format.equals("ewig.tdf")) {
                 loadEwigIBFFile(locator, newTracks, genome);
-            } else if (typeString.endsWith(".bw") || typeString.endsWith(".bb") || typeString.endsWith(".bigwig") ||
-                    typeString.endsWith(".bigbed")) {
+            } else if (format.equals("bw") || format.equals("bb") || format.equals("bigwig") ||
+                    format.equals("bigbed")) {
                 loadBWFile(locator, newTracks, genome);
-            } else if (typeString.endsWith(".ibf") || typeString.endsWith(".tdf")) {
+            } else if (format.equals("ibf") || format.equals("tdf")) {
                 loadTDFFile(locator, newTracks, genome);
-            } else if (typeString.endsWith(".counts")) {
+            } else if (format.equals("counts")) {
                 loadGobyCountsArchive(locator, newTracks, genome);
             } else if (WiggleParser.isWiggle(locator)) {
                 loadWigFile(locator, newTracks, genome);
-            } else if (typeString.endsWith(".maf.dict")) {
+            } else if (format.equals("maf.dict")) {
                 loadMultipleAlignmentTrack(locator, newTracks, genome);
-            } else if (typeString.endsWith("mage-tab") || ExpressionFileParser.parsableMAGE_TAB(locator)) {
-                locator.setDescription("MAGE_TAB");
-                loadGctFile(locator, newTracks, genome);
-            } else if (typeString.endsWith(".db") || typeString.endsWith(".dbn")) {
+            } else if (format.equals("db") || format.equals("dbn")) {
                 convertLoadStructureFile(locator, newTracks, genome, "dotBracket");
-            } else if (typeString.endsWith(".ct")) {
+            } else if (format.equals("ct")) {
                 convertLoadStructureFile(locator, newTracks, genome, "connectTable");
-            } else if (typeString.endsWith(".dp")) {
+            } else if (format.equals("dp")) {
                 convertLoadStructureFile(locator, newTracks, genome, "pairingProb");
-            } else if (typeString.endsWith(".bp")) {
+            } else if (format.equals("bp")) {
                 loadBasePairFile(locator, newTracks, genome);
-            } else if (GWASParser.isGWASFile(typeString)) {
+            } else if (GWASParser.isGWASFile(format)) {
                 loadGWASFile(locator, newTracks, genome);
             } else if (GobyAlignmentQueryReader.supportsFileType(path)) {
                 loadAlignmentsTrack(locator, newTracks, genome);
-            } else if (typeString.endsWith(".list")) {
+            } else if (format.equals("list")) {
                 // This should be deprecated
                 loadListFile(locator, newTracks, genome);
-            } else if (typeString.endsWith(".smap")) {
+            } else if (format.equals("smap")) {
                 loadSMAPFile(locator, newTracks, genome);
-            } else if (typeString.endsWith("dsi")) {
+            } else if (format.equals("dsi")) {
                 loadDSIFile(locator, newTracks, genome);
-            } else if (typeString.endsWith("bedpe") || typeString.endsWith("_clusters")) {
+            } else if (format.equals("bedpe")) {
                 loadBedPEFile(locator, newTracks, genome);
-            } else if (typeString.endsWith("clusters")) {
+            } else if (format.equals("clusters")) {
                 loadClusterFile(locator, newTracks, genome);
-            }  else if (typeString.endsWith(".d4")) {
+            }  else if (format.equals("d4")) {
                 D4FileParser datasource = new D4FileParser(locator.getPath(), genome);
                 DataSourceTrack track = new DataSourceTrack(locator, "D4:" + locator.getFileName(), locator.getFileName(), datasource);
                 newTracks.add(track);
-            } else if (CodecFactory.hasCodec(locator, genome) && !forceNotTribble(typeString)) {
+            } else if (CodecFactory.hasCodec(locator, genome) && !forceNotTribble(format)) {
                 loadTribbleFile(locator, newTracks, genome);
             } else if (MutationTrackLoader.isMutationAnnotationFile(locator)) {
                 loadMutFile(locator, newTracks, genome); // Must be tried before ".maf" test below
-            } else if (typeString.endsWith(".maf")) {
+            } else if (format.equals("maf")) {
                 loadMultipleAlignmentTrack(locator, newTracks, genome);
-            } else if (AttributeManager.isSampleInfoFile(locator)) {
-                // This might be a sample information file.
-                AttributeManager.getInstance().loadSampleInfo(locator);
             } else {
-                MessageUtils.showMessage("<html>Unknown file type: " + path + "<br>Check file extension");
-            }
+                //if a url, try htsget
+                boolean isHtsget = tryHtsget(locator, newTracks, genome);
+                if (!isHtsget) {
 
+                    // If the file is too large, give up
+                    // TODO -- ftp test
+                    final int tenMB = 10000000;
+                    long fileLength = ParsingUtils.getContentLength(locator.getPath());
+                    if (fileLength > tenMB) {
+                        MessageUtils.confirm("<html>Cannot determine file type of: " + locator.getPath());
+                    }
+
+                    // Read file contents and try to sort it out
+                    String contents = FileUtils.getContents(locator.getPath());
+                    BufferedReader reader = new BufferedReader(new StringReader(contents));
+
+                    if (CytoBandFileParser.isValid(reader, locator.getPath())) {
+                        Track track = new CytobandTrack(locator, new BufferedReader(new StringReader(contents)), genome);
+                        newTracks.add(track);
+                    } else if (AttributeManager.isSampleInfoFile(reader)) {
+                        // This might be a sample information file.
+                        AttributeManager.getInstance().loadSampleInfo(locator);
+                    } else {
+                        MessageUtils.showMessage("<html>Unknown file type: " + path + "<br>Check file extension");
+                    }
+                }
+            }
 
             // Track line
             if (newTracks.size() > 0) {
@@ -258,16 +279,54 @@ public class TrackLoader {
 
     }
 
+    /**
+     * Try to load as an htsget resource.  As most (all?) htsget endpoints use an https:// scheme URL, there is
+     * no way to detect other than try.
+     *
+     * @param locator
+     * @param newTracks
+     * @param genome
+     * @return
+     */
+    private boolean tryHtsget(ResourceLocator locator, List<Track> newTracks, Genome genome) {
+        boolean isHtsget = false;
+        if (locator.getPath().startsWith("https://") ||
+                locator.getPath().startsWith("http://") ||
+                locator.getPath().startsWith("htsget://")) {
+            try {
+                HtsgetUtils.Metadata htsgetMeta = HtsgetUtils.getMetadata(locator.getPath());
+                if (htsgetMeta != null) {
+                    isHtsget = true;
+                    locator.setFormat(htsgetMeta.getFormat().toLowerCase());
+                    if (htsgetMeta.getFormat().equals("VCF")) {
+                        locator.setHtsget(true);
+                        HtsgetVariantSource source = new HtsgetVariantSource(htsgetMeta, genome);
+                        loadVCFWithSource(locator, source, newTracks);
+                    } else if (htsgetMeta.getFormat().equals("BAM") || htsgetMeta.getFormat().equals("CRAM")) {
+                        locator.setHtsget(true);
+                        loadAlignmentsTrack(locator, newTracks, genome);
+                    } else {
+                        throw new RuntimeException("Format: '" + htsgetMeta.getFormat() + "' is not supported for htsget servers.");
+                    }
+                }
+            } catch (IOException e) {
+                // Not neccessarily an error, might just indicate its not an htsget server.  Not sure
+                // if this should be logged or not, it will be a common and expected occurence when loading
+                // sample information, which is checked after htsget
+                return false;
+            }
+        }
+        return isHtsget;
+    }
+
     public static boolean isAlignmentTrack(String typeString) {
-        return typeString.endsWith(".sam") || typeString.endsWith(".bam") || typeString.endsWith(".cram") ||
-                typeString.endsWith(".sam.list") || typeString.endsWith(".bam.list") ||
-                typeString.endsWith(".aligned") || typeString.endsWith(".sai") ||
-                typeString.endsWith(".bai") || typeString.endsWith(".csi") || typeString.equals("alist") ||
-                typeString.equals(Ga4ghAPIHelper.RESOURCE_TYPE);
+        return typeString.equals("sam") || typeString.equals("bam") || typeString.equals("cram") ||
+                typeString.equals("sam.list") || typeString.equals("bam.list") ||
+                typeString.equals("aligned") || typeString.equals("sai") ||
+                typeString.equals("bai") || typeString.equals("csi") || typeString.equals("alist");
     }
 
     private void loadSMAPFile(ResourceLocator locator, List<Track> newTracks, Genome genome) throws IOException {
-
         List<Feature> features = SMAPParser.parseFeatures(locator, genome);
         FeatureCollectionSource src = new FeatureCollectionSource(features, genome);
         FeatureTrack track = new FeatureTrack(locator, locator.getName(), src);
@@ -298,11 +357,11 @@ public class TrackLoader {
     }
 
     private void loadVCF(ResourceLocator locator, List<Track> newTracks, Genome genome) throws IOException, TribbleIndexNotFoundException {
-
-
         TribbleFeatureSource src = TribbleFeatureSource.getFeatureSource(locator, genome);
+        loadVCFWithSource(locator, src, newTracks);
+    }
 
-
+    private void loadVCFWithSource(ResourceLocator locator, FeatureSource src, List<Track> newTracks) {
         VCFHeader header = (VCFHeader) src.getHeader();
 
         // Test if the input VCF file contains methylation rate data:
@@ -349,7 +408,6 @@ public class TrackLoader {
         newTracks.add(t);
     }
 
-
     private void loadBlastMapping(ResourceLocator locator, List<Track> newTracks) {
 
         List<BlastMapping> mappings = (new BlastParser()).parse(locator.getPath());
@@ -389,32 +447,44 @@ public class TrackLoader {
      */
     private void loadTribbleFile(ResourceLocator locator, List<Track> newTracks, Genome genome) throws IOException, TribbleIndexNotFoundException {
 
-        String typeString = locator.getTypeString();
+        String format = locator.getFormat();
 
         // Mutation (mut, maf, vcf) files are handled special.  Check here, rather than depend on order in giant case statement.
         if (MutationTrackLoader.isMutationAnnotationFile(locator)) {
             loadMutFile(locator, newTracks, genome); // Must be tried before generic "loadIndexed" below
-        } else if (VariantTrack.isVCF(typeString)) {
+        } else if (VariantTrack.isVCF(format)) {
             loadVCF(locator, newTracks, genome);
         } else {
 
-            TribbleFeatureSource tribbleFeatureSource = TribbleFeatureSource.getFeatureSource(locator, genome);
-
             FeatureSource src;
-            if(GFFFeatureSource.isGFF(locator.getPath())) {
-                GFFCodec codec =  (GFFCodec) CodecFactory.getCodec(locator, genome);
-                 src = new GFFFeatureSource(tribbleFeatureSource, codec.getVersion()) ;
+
+            if (locator.isDataURL()) {
+                // Simulate a tribble source
+                DataURLParser parser = new DataURLParser();
+                parser.parseFeatures(locator.getPath(), format, genome);
+                src = new FeatureCollectionSource(parser.getFeatures(), genome);
+
+                TrackProperties tp = parser.getTrackProperties();
+                if (tp != null) {
+                    ((FeatureCollectionSource) src).setHeader(tp);
+                }
             } else {
-                src = tribbleFeatureSource;
+                TribbleFeatureSource tribbleFeatureSource = TribbleFeatureSource.getFeatureSource(locator, genome);
+                if (GFFFeatureSource.isGFF(locator.getPath())) {
+                    GFFCodec codec = (GFFCodec) CodecFactory.getCodec(locator, genome);
+                    src = new GFFFeatureSource(tribbleFeatureSource, codec.getVersion());
+                } else {
+                    src = tribbleFeatureSource;
+                }
             }
 
             // Create feature source and track
             FeatureTrack t = new FeatureTrack(locator, src);
-            t.setName(locator.getTrackName());
+
             //t.setRendererClass(BasicTribbleRenderer.class);
 
             // Set track properties from header
-            Object header = tribbleFeatureSource.getHeader();
+            Object header = src.getHeader();
             if (header != null && header instanceof FeatureFileHeader) {
                 FeatureFileHeader ffh = (FeatureFileHeader) header;
                 if (ffh.getTrackType() != null) {
@@ -429,10 +499,11 @@ public class TrackLoader {
                     t.setHeight(15);
                 }
             }
-            if (locator.getPath().contains(".narrowPeak") ||
-                    locator.getPath().contains(".broadPeak") ||
-                    locator.getPath().contains(".gappedPeak")||
-                    locator.getPath().contains(".regionPeak") ) {
+            String path = locator.getPath().toLowerCase();
+            if (path.contains(".narrowpeak") ||
+                    locator.getPath().contains(".broadpeak") ||
+                    locator.getPath().contains(".gappedpeak") ||
+                    locator.getPath().contains(".regionpeak")) {
                 t.setUseScore(true);
             }
             newTracks.add(t);
@@ -585,9 +656,9 @@ public class TrackLoader {
     private void loadCufflinksFile(ResourceLocator locator, List<Track> newTracks, Genome genome) throws IOException {
 
         final String path = locator.getPath();
-        final String s = path.toLowerCase();
+        final String format = locator.getFormat();
         List<DataTrack> cuffTracks = new ArrayList<DataTrack>();
-        if (s.endsWith("fpkm_tracking")) {
+        if (format.equals("fpkm_tracking")) {
             FPKMTrackingCodec codec = new FPKMTrackingCodec(path);
             List<FPKMValue> values = CufflinksParser.parse(codec, path);
             for (int sampleIndex = 0; sampleIndex < codec.getNumSamples(); sampleIndex++) {
@@ -596,7 +667,7 @@ public class TrackLoader {
                 DataTrack track = new DataSourceTrack(locator, locator.getPath() + " " + supId, locator.getTrackName() + " " + supId, ds);
                 cuffTracks.add(track);
             }
-        } else if (s.endsWith("gene_exp.diff") || s.endsWith("cds_exp.diff")) {
+        } else if (format.equals("gene_exp.diff") || format.equals("cds_exp.diff")) {
             AsciiFeatureCodec<ExpDiffValue> codec = new ExpDiffCodec(path);
             List<ExpDiffValue> values = CufflinksParser.parse(codec, path);
             CufflinksDataSource ds = new CufflinksDataSource(values, genome);
@@ -714,13 +785,7 @@ public class TrackLoader {
             ParsingUtils.parseTrackLine(trackLine, props);
         }
 
-        // In case of conflict between the resource locator display name and the track properties name,
-        // use the resource locator
         String name = locator.getName();
-        if (name != null && props != null) {
-            props.setName(name);
-        }
-
         if (name == null) {
             name = props == null ? locator.getTrackName() : props.getName();
         }
@@ -854,9 +919,8 @@ public class TrackLoader {
             String dsName = locator.getTrackName();
 
             // If the user tried to load the index,  look for the file (this is a common mistake)
-            if (locator.getTypeString().endsWith(".sai") ||
-                    locator.getTypeString().endsWith(".bai") ||
-                    locator.getTypeString().endsWith(".csi")) {
+            final String format = locator.getFormat();
+            if (format.equals("sai") || format.equals("bai") || format.equals("csi")) {
                 MessageUtils.showMessage("<html><b>ERROR:</b> Loading SAM/BAM index files are not supported:  " + locator.getPath() +
                         "<br>Load the SAM or BAM file directly. ");
                 return;
@@ -873,7 +937,7 @@ public class TrackLoader {
                 }
             }
 
-            if (locator.getTypeString().endsWith("bam") || locator.getTypeString().endsWith("cram")) {
+            if (format.equals("bam") || format.equals("cram")) {
                 if (!dataManager.hasIndex()) {
                     MessageUtils.showMessage("<html>Could not load index file for: " +
                             locator.getPath() + "<br>  An index file is required for SAM & BAM files.");
@@ -885,9 +949,9 @@ public class TrackLoader {
             alignmentTrack.setName(dsName);
             alignmentTrack.setVisible(PreferencesManager.getPreferences().getAsBoolean(SAM_SHOW_ALIGNMENT_TRACK));
 
+
             // Create coverage track
             CoverageTrack covTrack = new CoverageTrack(locator, dsName + " Coverage", alignmentTrack, genome);
-            covTrack.setVisible(PreferencesManager.getPreferences().getAsBoolean(SAM_SHOW_COV_TRACK));
             newTracks.add(covTrack);
             covTrack.setDataManager(dataManager);
             dataManager.setCoverageTrack(covTrack);
@@ -896,9 +960,8 @@ public class TrackLoader {
 
             // Search for precalculated coverage data
             // Skip for GA4GH & SU2C resources
-            if (!(Ga4ghAPIHelper.RESOURCE_TYPE.equals(locator.getType()) ||
-                    locator.getPath().contains("dataformat=.bam") ||
-                    GoogleUtils.isGoogleCloud(locator.getPath()))) {
+            if (!locator.getPath().contains("dataformat=.bam") ||
+                    GoogleUtils.isGoogleCloud(locator.getPath())) {
 
                 String covPath = locator.getCoverage();
                 if (covPath == null) {
@@ -924,15 +987,13 @@ public class TrackLoader {
                 }
             }
 
-            boolean showSpliceJunctionTrack = PreferencesManager.getPreferences().getAsBoolean(SAM_SHOW_JUNCTION_TRACK);
-
             SpliceJunctionTrack spliceJunctionTrack = new SpliceJunctionTrack(locator,
                     dsName + " Junctions", dataManager, alignmentTrack, SpliceJunctionTrack.StrandOption.BOTH);
             spliceJunctionTrack.setHeight(60);
-            spliceJunctionTrack.setVisible(showSpliceJunctionTrack);
             newTracks.add(spliceJunctionTrack);
-
             alignmentTrack.setSpliceJunctionTrack(spliceJunctionTrack);
+
+            alignmentTrack.init();
 
             newTracks.add(alignmentTrack);
 

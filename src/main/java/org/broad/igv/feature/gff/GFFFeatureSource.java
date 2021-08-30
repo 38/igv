@@ -68,6 +68,11 @@ public class GFFFeatureSource implements org.broad.igv.track.FeatureSource {
     }
 
     @Override
+    public Object getHeader() {
+        return this.wrappedSource.getHeader();
+    }
+
+    @Override
     public void dispose() {
         wrappedSource.dispose();
     }
@@ -102,11 +107,6 @@ public class GFFFeatureSource implements org.broad.igv.track.FeatureSource {
     @Override
     public int getFeatureWindowSize() {
         return wrappedSource.getFeatureWindowSize();
-    }
-
-    @Override
-    public void setFeatureWindowSize(int size) {
-        wrappedSource.setFeatureWindowSize(size);
     }
 
 }

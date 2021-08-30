@@ -29,15 +29,12 @@ import org.apache.log4j.Logger;
 import org.broad.igv.DirectoryManager;
 import org.broad.igv.Globals;
 import org.broad.igv.ui.IGV;
-import org.broad.igv.ui.filefilters.AlignmentFileFilter;
-import org.broad.igv.ui.filefilters.CoverageFileFilter;
 
 import javax.swing.*;
-import javax.swing.filechooser.FileFilter;
 import java.awt.*;
 import java.io.File;
+import java.io.FileFilter;
 import java.io.FilenameFilter;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
 /**
@@ -64,74 +61,37 @@ public class FileDialogUtils {
         return chooseFile(title, initialDirectory, initialFile, null, JFileChooser.FILES_ONLY, mode);
     }
 
-    public static File chooseFileOrDirectory(String title, File initialDirectory, File initialFile, int mode) {
-        return chooseFile(title, initialDirectory, initialFile, null, JFileChooser.FILES_AND_DIRECTORIES, mode);
-    }
-
     private static File chooseFile(String title, File initialDirectory, File initialFile, FilenameFilter filter,
                                    int directoriesMode, int mode) {
 
         if (initialDirectory == null && initialFile != null) {
             initialDirectory = initialFile.getParentFile();
         }
-
         // Strip off parent directory
         if (initialFile != null) initialFile = new File(initialFile.getName());
+        return chooseNative(title, initialDirectory, initialFile, filter, directoriesMode, mode);
 
-        if (Globals.IS_MAC && !Globals.IS_JWS && directoriesMode != JFileChooser.FILES_AND_DIRECTORIES) {
-            return chooseNative(title, initialDirectory, initialFile, filter, directoriesMode, mode);
-        } else {
-            return chooseSwing(title, initialDirectory, initialFile, filter, directoriesMode, mode);
-        }
     }
 
     public static File chooseDirectory(String title, File initialDirectory) {
-        if (Globals.IS_MAC && !Globals.IS_JWS) {
+        if (Globals.IS_MAC) {
             return chooseNative(title, initialDirectory, null, null, JFileChooser.DIRECTORIES_ONLY, LOAD);
         } else {
             return chooseSwing(title, initialDirectory, null, null, JFileChooser.DIRECTORIES_ONLY, LOAD);
         }
     }
 
+
     public static File[] chooseMultiple(String title, File initialDirectory, final FilenameFilter filter) {
 
         File[] files = null;
-
-        if (Globals.IS_MAC && !Globals.IS_JWS) {
-
-            FileDialog fd = getNativeChooser(title, initialDirectory, null, filter, JFileChooser.FILES_ONLY, LOAD);
-            if (fd.isMultipleMode()) {
-                fd.setVisible(true);
-                files = fd.getFiles();
-            }
-
+        FileDialog fd = getNativeChooser(title, initialDirectory, null, filter, JFileChooser.FILES_ONLY, LOAD);
+        if (fd.isMultipleMode()) {
+            fd.setVisible(true);
+            files = fd.getFiles();
         }
-
-        //Files will be an empty array if user cancelled dialog,
-        //null if there was a problem with the native dialog
-        if (files == null) {
-            files = chooseMultipleSwing(title, initialDirectory, filter);
-        }
-
         return files;
     }
-
-    private static File[] chooseMultipleSwing(String title, File initialDirectory, final FilenameFilter filter) {
-        JFileChooser fileChooser = getJFileChooser(title, initialDirectory, null, filter, JFileChooser.FILES_ONLY);
-        fileChooser.setMultiSelectionEnabled(true);
-        fileChooser.addChoosableFileFilter(new AlignmentFileFilter());
-        fileChooser.addChoosableFileFilter(new CoverageFileFilter());
-        // set the default file filter to "All"
-        fileChooser.setFileFilter(fileChooser.getChoosableFileFilters()[0]);
-
-        boolean approve = fileChooser.showOpenDialog(getParentFrame()) == JFileChooser.APPROVE_OPTION;
-        if (approve) {
-            return fileChooser.getSelectedFiles();
-        } else {
-            return null;
-        }
-    }
-
 
     private static FileDialog getNativeChooser(String title, File initialDirectory, File initialFile, FilenameFilter filter, int directoryMode, int mode) {
         boolean directories = JFileChooser.DIRECTORIES_ONLY == directoryMode;
@@ -173,24 +133,6 @@ public class FileDialogUtils {
             return new File(directory, file);
         } else {
             return null;
-        }
-    }
-
-    /**
-     * Reflectively call FileDialog.setMultipleMode.
-     * Does nothing if method not available
-     *
-     * @param fd
-     * @param b
-     * @return true if call was successful, false if not
-     */
-    private static boolean setMultipleMode(FileDialog fd, boolean b) {
-        try {
-            Method method = FileDialog.class.getMethod("setMultipleMode", boolean.class);
-            method.invoke(fd, b);
-            return true;
-        } catch (Exception e) {
-            return false;
         }
     }
 
@@ -236,7 +178,7 @@ public class FileDialogUtils {
             fileChooser.setSelectedFile(initialFile);
         }
         if (filter != null) {
-            fileChooser.setFileFilter(new FileFilter() {
+            fileChooser.setFileFilter(new javax.swing.filechooser.FileFilter() {
                 @Override
                 public boolean accept(File file) {
                     return filter.accept(file.getParentFile(), file.getName());
@@ -255,6 +197,24 @@ public class FileDialogUtils {
         return fileChooser;
     }
 
+
+    /**
+     * Reflectively call FileDialog.setMultipleMode.
+     * Does nothing if method not available
+     *
+     * @param fd
+     * @param b
+     * @return true if call was successful, false if not
+     */
+    private static boolean setMultipleMode(FileDialog fd, boolean b) {
+        try {
+            Method method = FileDialog.class.getMethod("setMultipleMode", boolean.class);
+            method.invoke(fd, b);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
     /**
      * Fix for bug in MacOS "native" dialog.  If hide extension is on the extension is stripped from the dialog,

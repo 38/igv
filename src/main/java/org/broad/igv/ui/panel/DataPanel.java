@@ -50,6 +50,7 @@ import org.broad.igv.ui.IGV;
 import org.broad.igv.ui.UIConstants;
 import org.broad.igv.ui.WaitCursorManager;
 import org.broad.igv.ui.util.DataPanelTool;
+import org.broad.igv.ui.util.MessageUtils;
 
 import javax.swing.*;
 import javax.swing.event.MouseInputAdapter;
@@ -119,7 +120,6 @@ public class DataPanel extends JComponent implements Paintable, IGVEventObserver
         return sp == null ? null : ((JScrollPane) sp).getVerticalScrollBar();
     }
 
-
     public void setCurrentTool(final AbstractDataPanelTool tool) {
         this.currentTool = (tool == null) ? defaultTool : tool;
         if (currentTool != null) {
@@ -127,26 +127,10 @@ public class DataPanel extends JComponent implements Paintable, IGVEventObserver
         }
     }
 
-    public boolean allTracksLoaded() {
-        return parent.getTrackGroups().stream().
-                filter(TrackGroup::isVisible).
-                flatMap(trackGroup -> trackGroup.getVisibleTracks().stream()).
-                allMatch(track -> track.isReadyToPaint(frame));
-    }
-
     long lastPaintTime = 0;
+
     @Override
     public void paintComponent(final Graphics g) {
-
-        if(!allTracksLoaded()) {
-            if(log.isDebugEnabled()) {
-                log.debug("Attempt to paint before data is loaded");
-                for (Track t : parent.getAllTracks()) {
-                    log.debug(t.getName());
-                }
-            }
-            return;
-        }
 
         super.paintComponent(g);
         RenderContext context = null;
@@ -185,14 +169,22 @@ public class DataPanel extends JComponent implements Paintable, IGVEventObserver
             long dt = System.currentTimeMillis() - lastPaintTime;
             PanTool.repaintTime(dt);
 
+        } catch (Exception e) {
+            MessageUtils.showMessage("Unexpected error repainting view.  See igv.log for details.");
+            log.error("Error painting DataPanel", e);
         } finally {
-
             if (context != null) {
                 context.dispose();
             }
         }
     }
 
+    @Override
+    public void setBounds(int x, int y, int width, int height) {
+        super.setBounds(x, y, width, height);
+        Insets insets = this.getInsets();
+        frame.setBounds(x + insets.left, width - insets.left - insets.right);
+    }
 
     /**
      * TODO -- move this to a "layout" command, to layout tracks and assign positions
@@ -238,9 +230,12 @@ public class DataPanel extends JComponent implements Paintable, IGVEventObserver
      * @param rect
      */
 
-    public void paintOffscreen(final Graphics2D g, Rectangle rect) {
+    public void paintOffscreen(final Graphics2D g, Rectangle rect, boolean batch) {
 
         RenderContext context = null;
+        Graphics borderGraphics = g.create();
+        borderGraphics.setColor(Color.darkGray);
+
         try {
 
             context = new RenderContext(null, g, frame, rect);
@@ -250,17 +245,19 @@ public class DataPanel extends JComponent implements Paintable, IGVEventObserver
 
             drawAllRegions(g);
 
-            Color c = g.getColor();
-            g.setColor(Color.darkGray);
-            g.drawRect(rect.x, rect.y, rect.width, rect.height);
-            g.setColor(c);            //super.paintBorder(g);
+            borderGraphics.drawRect(0, rect.y, rect.width - 1, rect.height - 1);
 
         } finally {
-
             if (context != null) {
                 context.dispose();
             }
+            borderGraphics.dispose();
         }
+    }
+
+    @Override
+    public int getSnapshotHeight(boolean batch) {
+        return getHeight();
     }
 
 
@@ -473,7 +470,7 @@ public class DataPanel extends JComponent implements Paintable, IGVEventObserver
 
 
     private void init() {
-        setBorder(javax.swing.BorderFactory.createLineBorder(new java.awt.Color(0, 0, 0)));
+        setBorder(javax.swing.BorderFactory.createLineBorder(new java.awt.Color(200, 200, 200)));
         setRequestFocusEnabled(false);
 
         // Key Events
@@ -572,7 +569,7 @@ public class DataPanel extends JComponent implements Paintable, IGVEventObserver
             updateTooltipText(e.getX(), e.getY());
 
             if (IGV.getInstance().isRulerEnabled()) {
-                IGV.getInstance().repaintContentPane();
+                IGV.getInstance().repaint();
             }
 
         }
@@ -608,11 +605,10 @@ public class DataPanel extends JComponent implements Paintable, IGVEventObserver
                 e.consume();
             } else {
                 if (mouseDown != null && distance(mouseDown, e) < 5) {
-                doMouseClick(e);
+                    doMouseClick(e);
                 } else if (currentTool != null)
                     currentTool.mouseReleased(e);
             }
-            setCurrentTool(null);
             mouseDown = null;
         }
 

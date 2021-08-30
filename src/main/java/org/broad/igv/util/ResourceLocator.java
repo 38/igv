@@ -28,15 +28,24 @@ package org.broad.igv.util;
 import com.google.gson.JsonObject;
 import htsjdk.tribble.Tribble;
 import org.apache.log4j.Logger;
-import org.broad.igv.google.Ga4ghAPIHelper;
+import org.broad.igv.data.cufflinks.FPKMTrackingCodec;
+import org.broad.igv.feature.FeatureType;
+import org.broad.igv.feature.dsi.DSICodec;
+import org.broad.igv.feature.tribble.IntervalListCodec;
+import org.broad.igv.feature.tribble.MUTCodec;
+import org.broad.igv.feature.tribble.PAFCodec;
+import org.broad.igv.feature.tribble.UCSCGeneTableCodec;
 import org.broad.igv.google.GoogleUtils;
 
+//import java.awt.*;
 import java.awt.*;
 import java.io.File;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
+import java.util.List;
+
+import static org.broad.igv.feature.tribble.CodecFactory.ucscSNP;
 
 /**
  * Represents a data file or other resource, which might be local file or remote resource.
@@ -97,7 +106,7 @@ public class ResourceLocator {
     /**
      * The type of resource (generally this refers to the file format)
      */
-    String type;
+    public String format;
 
 
     /**
@@ -112,23 +121,67 @@ public class ResourceLocator {
 
     String sampleId;
 
-    String username;
-
-    String password;
-
     private HashMap attributes = new HashMap();
     private boolean indexed;
+    private boolean dataURL;
 
     /**
-     * Constructor for local files
+     * True if this is an htsget resource
+     */
+    private boolean htsget;
+
+    private Integer visibilityWindow;
+
+    public static List<ResourceLocator> getLocators(Collection<File> files) {
+
+        List<ResourceLocator> locators = new ArrayList<>();
+
+        Set<String> indexExtensions = new HashSet<>(Arrays.asList("bai", "crai", "sai", "tbi", "tbx"));
+        Set<File> indexes = new HashSet<>();
+        Map<String, File> indexMap = new HashMap<>();
+        for (File f : files) {
+            String fn = f.getName();
+            int idx = fn.lastIndexOf('.');
+            if (idx > 0) {
+                String ext = fn.substring(idx + 1);
+                if (indexExtensions.contains(ext)) {
+                    String base = fn.substring(0, idx);
+                    if (ext.equals(".bai") && !base.endsWith(".bam")) {
+                        base += ".bam";   // Picard convention
+                    } else if (ext.equals(".crai") && !base.endsWith(".cram")) {
+                        base += ".cram";  // Possible Picard convention
+                    }
+                    indexes.add(f);
+                    indexMap.put(base, f);
+                }
+            }
+        }
+
+        for (File f : files) {
+            if (indexes.contains(f)) continue;
+            ResourceLocator locator = new ResourceLocator(f.getAbsolutePath());
+            File indexFile = indexMap.get(f.getName());
+            if (indexFile != null) {
+                locator.setIndexPath(indexFile.getAbsolutePath());
+            }
+            locators.add(locator);
+        }
+
+        return locators;
+    }
+
+    /**
+     * Constructor for local files and URLs
      *
      * @param path
      */
     public ResourceLocator(String path) {
-        this.setPath(path);
 
+        this.setPath(path);
         if (path != null && path.startsWith("https://") && GoogleUtils.isGoogleDrive(path)) {
             this.resolveGoogleDrive(path);
+        } else if (path != null && path.startsWith("htsget://")) {
+            this.htsget = true;
         }
 
     }
@@ -137,7 +190,7 @@ public class ResourceLocator {
 
         JsonObject fileInfo = GoogleUtils.getDriveFileInfo(path);
         this.name = fileInfo.get("name").getAsString();
-        this.type = getTypeString(this.name);
+        this.format = deriveFormat(this.name);
     }
 
     /**
@@ -151,6 +204,10 @@ public class ResourceLocator {
         this.setPath(path);
     }
 
+    public boolean isDataURL() {
+        return dataURL;
+    }
+
     /**
      * Determines if the resource actually exists.
      *
@@ -161,16 +218,8 @@ public class ResourceLocator {
     }
 
 
-    public void setType(String type) {
-        this.type = type;
-    }
-
-    public String getType() {
-        return type;
-    }
-
-    public String getTypeString() {
-        return this.getTypeString(this.path);
+    public void setFormat(String format) {
+        this.format = format;
     }
 
     /**
@@ -179,45 +228,94 @@ public class ResourceLocator {
      *
      * @return
      */
-    public String getTypeString(String pathOrName) {
-        if (type != null) {
-            return type;
-        } else {
+    public String getFormat() {
+        if (format == null) {
+            format = deriveFormat(this.path);
+        }
+        return format;
+    }
 
-            String typeString = pathOrName.toLowerCase();
-            if (typeString.startsWith("http://") || typeString.startsWith("https://") ||
-                    typeString.startsWith("gs://") || typeString.startsWith("s3://")) {
 
-                try {
-                    URL url = HttpUtils.createURL(pathOrName);
+    public Integer getVisibilityWindow() {
+        return visibilityWindow;
+    }
 
-                    typeString = url.getPath().toLowerCase();
-                    String query = url.getQuery();
-                    if (query != null) {
-                        Map<String, String> queryMap = URLUtils.parseQueryString(query);
-                        // If type is set explicitly use it
-                        if (queryMap.containsKey("dataformat")) {
-                            String format = queryMap.get("dataformat");
-                            typeString = format;
-                        } else if (queryMap.containsKey("file")) {
-                            typeString = queryMap.get("file");
-                        }
+    public void setVisibilityWindow(Integer visibilityWindow) {
+        this.visibilityWindow = visibilityWindow;
+    }
+
+    private String deriveFormat(String pathOrName) {
+
+        String filename;
+        if (FileUtils.isRemote(pathOrName)) {
+            try {
+                URL url = HttpUtils.createURL(pathOrName);
+                filename = url.getPath().toLowerCase();
+                String query = url.getQuery();
+                if (query != null) {
+                    Map<String, String> queryMap = URLUtils.parseQueryString(query);
+                    // If type is set explicitly use it
+                    if (queryMap.containsKey("dataformat")) {
+                        return queryMap.get("dataformat");
+                    } else if (queryMap.containsKey("file")) {
+                        filename = queryMap.get("file");
                     }
-
-                } catch (MalformedURLException e) {
-                    log.error("Error interpreting url: " + pathOrName, e);
-                    typeString = pathOrName;
                 }
+
+            } catch (MalformedURLException e) {
+                log.error("Error interpreting url: " + pathOrName, e);
+                filename = pathOrName;
             }
+        } else {
+            filename = pathOrName.toLowerCase();
+        }
 
-            // Strip .txt, .gz, and .xls extensions.  (So  foo.cn.gz => a .cn file)
-            if ((typeString.endsWith(".txt") || typeString.endsWith(
-                    ".xls") || typeString.endsWith(".gz") || typeString.endsWith(".bgz"))) {
-                typeString = typeString.substring(0, typeString.lastIndexOf(".")).trim();
-            }
+        // Strip .txt, .gz, and .xls extensions.  (So  foo.cn.gz => a cn file)
+        if ((filename.endsWith(".txt") || filename.endsWith(".xls") || filename.endsWith(".gz") ||
+                filename.endsWith(".bgz"))) {
+            filename = filename.substring(0, filename.lastIndexOf(".")).trim();
+        }
 
-            return typeString;
-
+        // Some special cases
+        if (filename.endsWith("fpkm_tracking")) {
+            return "fpkm_tracking";
+        } else if (filename.endsWith("gene_exp.diff")) {
+            return "gene_exp.diff";
+        } else if (filename.endsWith("cds_exp.diff")) {
+            return "cds_exp.diff";
+        } else if (filename.endsWith("genepredext")) {
+            return "genepredext";
+        } else if (filename.contains("refflat")) {
+            return "reflat";
+        } else if (filename.contains("genepred") || filename.contains("ensgene") ||
+                filename.contains("refgene") || filename.contains("ncbirefseq")) {
+            return "refgene";
+        } else if (filename.contains("ucscgene")) {
+            return "ucscgene";
+        } else if (filename.endsWith(".maf.annotated")) {
+            // TCGA extension
+            return "mut";
+        } else if (filename.endsWith("junctions.bed")) {
+            return "junctions";
+        } else if (filename.matches(ucscSNP)) {
+            return "snp";
+        } else if (filename.endsWith("bam.list")) {
+            return "bam.list";
+        } else if (filename.endsWith("sam.list")) {
+            return "sam.list";
+        } else if (filename.endsWith("vcf.list")) {
+            return "vcf.list";
+        } else if (filename.endsWith("seg.zip")) {
+            return "seg.zip";
+        } else if (filename.endsWith(".ewig.tdf") || (filename.endsWith(".ewig.ibf"))) {
+            return "ewig.tdf";
+        } else if (filename.endsWith(".maf.dict")) {
+            return "maf.dict";
+        } else if (filename.endsWith("_clusters")) {
+            return "bedpe";
+        } else {
+            // Default - return the extension
+            return filename.substring(filename.lastIndexOf('.') + 1).toLowerCase();
         }
     }
 
@@ -255,7 +353,17 @@ public class ResourceLocator {
     }
 
     public String getFileName() {
-        return (new File(path)).getName();
+        if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("gs://")) {
+            int idxQuestion = path.indexOf('?');
+            String actualPath = idxQuestion < 0 ? path : path.substring(0, idxQuestion);
+            int idxSlash = actualPath.lastIndexOf('/');
+            return idxSlash < 0 ?
+                    actualPath :
+                    actualPath.substring(idxSlash + 1);
+
+        } else {
+            return (new File(path)).getName();
+        }
     }
 
 
@@ -264,7 +372,7 @@ public class ResourceLocator {
     }
 
     public boolean isLocal() {
-        return dbURL == null && !FileUtils.isRemote(path) && !Ga4ghAPIHelper.RESOURCE_TYPE.equals(type);
+        return dbURL == null && !dataURL && !FileUtils.isRemote(path);
     }
 
     public void setTrackInforURL(String trackInforURL) {
@@ -284,18 +392,11 @@ public class ResourceLocator {
     }
 
     public String getTrackName() {
-        if (name == null) {
-            if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("gs://")) {
-                int idx = path.lastIndexOf('/');
-                int idx2 = path.indexOf('?');
-                return idx2 > idx ? path.substring(idx + 1, idx2) : path.substring(idx + 1);
-
-            } else {
-                return new File(path).getName();
-            }
+        if (name != null) {
+            return name;
+        } else {
+            return this.getFileName();
         }
-        return name;
-
     }
 
 
@@ -333,29 +434,15 @@ public class ResourceLocator {
     }
 
     public void setPath(String path) {
+
         if (path != null && path.startsWith("file://")) {
             this.path = path.substring("file://".length());
-        } else if (path != null && path.startsWith("gs://")) {
-            this.path = GoogleUtils.translateGoogleCloudURL(path);
         } else if (path != null && path.startsWith("s3://")) {
             this.path = path;
-
-            // Set UI human-readable short name for the file
-            String objFname = "";
-            if (path.contains("/")) {
-                objFname = path.substring(path.lastIndexOf('/')).replace("/", "");
-            } else {
-                objFname = path;
-            }
-
-            log.debug("S3 object filename visible in IGV UI is: " + objFname);
-            this.setName(objFname);
-
             String s3UrlIndexPath = detectIndexPath(path);
-
             this.setIndexPath(s3UrlIndexPath);
-
         } else {
+            this.dataURL = ParsingUtils.isDataURL(path);
             this.path = path;
         }
     }
@@ -403,22 +490,6 @@ public class ResourceLocator {
             log.debug("S3 index object filetype could not be determined from S3 url");
         }
         return indexPath;
-    }
-
-    public String getUsername() {
-        return username;
-    }
-
-    public void setUsername(String username) {
-        this.username = username;
-    }
-
-    public String getPassword() {
-        return password;
-    }
-
-    public void setPassword(String password) {
-        this.password = password;
     }
 
     @Override
@@ -503,6 +574,14 @@ public class ResourceLocator {
         return indexed;
     }
 
+    public boolean isHtsget() {
+        return htsget;
+    }
+
+    public void setHtsget(boolean htsget) {
+        this.htsget = htsget;
+    }
+
     private static boolean isCloudOrDropbox(String path) {
         try {
             if (GoogleUtils.isGoogleDrive(path)) {
@@ -539,7 +618,8 @@ public class ResourceLocator {
         COVERAGE("coverage"),
         MAPPING("mapping"),
         COLOR("color"),
-        INDEX("index");
+        INDEX("index"),
+        HTSGET("htsget");
 
         private String name;
 

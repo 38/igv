@@ -118,36 +118,31 @@ public class ApplicationStatusBar extends JPanel implements IGVEventObserver { /
     }
 
     public void setMessage(final String message) {
-        UIUtilities.invokeOnEventThread(() -> {
+        UIUtilities.invokeAndWaitOnEventThread(() -> {
             messageBox.setText(message);
+            messageBox.validate();
             messageBox.paintImmediately(messageBox.getBounds());
         });
-
-        if (!SwingUtilities.isEventDispatchThread()) {
-            try {
-                Thread.currentThread().sleep(10);
-            } catch (InterruptedException e) {
-                // ignore
-            }
-        }
     }
 
     public void setMessage2(final String message) {
-        UIUtilities.invokeOnEventThread(() -> {
+        UIUtilities.invokeAndWaitOnEventThread(() -> {
             messageBox2.setText(message);
+            messageBox.validate();
             messageBox2.paintImmediately(messageBox2.getBounds());
         });
     }
 
     public void setMessage3(final String message) {
-        UIUtilities.invokeOnEventThread(() -> {
+        UIUtilities.invokeAndWaitOnEventThread(() -> {
             messageBox3.setText(message);
+            messageBox.validate();
             messageBox3.paintImmediately(messageBox2.getBounds());
         });
     }
 
     private JLabel createMessageField(Color bg, Font font) {
-        JLabel messageField = new JLabel();
+        JLabel messageField = new JLabel("");
         messageField.setBackground(bg);
         messageField.setFont(font);
         messageField.setBorder(BorderFactory.createLineBorder(Color.black));

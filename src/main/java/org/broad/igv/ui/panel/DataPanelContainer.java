@@ -37,6 +37,7 @@ import org.broad.igv.ui.util.MessageUtils;
 import org.broad.igv.util.HttpUtils;
 import org.broad.igv.util.ResourceLocator;
 
+import javax.swing.*;
 import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.Transferable;
@@ -51,29 +52,36 @@ import java.util.*;
  */
 public class DataPanelContainer extends TrackPanelComponent implements Paintable {
 
+    static final int default_hgap = 6;
     private static Logger log = Logger.getLogger(DataPanelContainer.class);
 
     TrackPanel parent;
 
-
     public DataPanelContainer(TrackPanel trackPanel) {
         super(trackPanel);
-
         DropTarget target = new DropTarget(this, new FileDropTargetListener(trackPanel));
         setDropTarget(target);
         target.setActive(true);
-        this.setLayout(new DataPanelLayout());
+        this.setLayout(new BoxLayout(this, BoxLayout.X_AXIS));
         this.parent = trackPanel;
         createDataPanels();
-
     }
 
     public void createDataPanels() {
         removeAll();
+        int hgap = default_hgap;
+        if (FrameManager.getFrames().size() > 10) {
+            hgap = 1 + 20 / FrameManager.getFrames().size();
+        }
+        boolean first = true;
         for (ReferenceFrame f : FrameManager.getFrames()) {
             if (f.isVisible()) {
+                if (!first) {
+                    this.add(Box.createRigidArea(new Dimension(hgap, 0)));
+                }
                 DataPanel dp = new DataPanel(f, this);
                 add(dp);
+                first = false;
             }
         }
         invalidate();
@@ -115,7 +123,7 @@ public class DataPanelContainer extends TrackPanelComponent implements Paintable
      * @param g
      * @param rect
      */
-    public void paintOffscreen(Graphics2D g, Rectangle rect) {
+    public void paintOffscreen(Graphics2D g, Rectangle rect, boolean batch) {
 
         // Get the components of the sort by X position.
         Component[] components = getComponents();
@@ -133,11 +141,16 @@ public class DataPanelContainer extends TrackPanelComponent implements Paintable
                 clipRect.height = rect.height;
                 g2d.setClip(clipRect);
                 g2d.translate(c.getX(), 0);
-                ((DataPanel) c).paintOffscreen(g2d, clipRect);
+                ((DataPanel) c).paintOffscreen(g2d, clipRect, batch);
 
             }
         }
         //super.paintBorder(g);
+    }
+
+    @Override
+    public int getSnapshotHeight(boolean batch) {
+        return getHeight();
     }
 
     @Override
@@ -206,15 +219,17 @@ public class DataPanelContainer extends TrackPanelComponent implements Paintable
             MessageCollection messages = new MessageCollection();
             try {
                 List<File> files = (List<File>) transferable.getTransferData(DataFlavor.javaFileListFlavor);
-
-                for (File file : files) {
-                    try {
-                        ResourceLocator locator = new ResourceLocator(file.getAbsolutePath());
-                        IGV.getInstance().load(locator, panel);
-                    } catch (DataLoadException de) {
-                        messages.append(de.getMessage());
+                if (files != null && files.size() > 0) {
+                    List<ResourceLocator> locators = ResourceLocator.getLocators(files);
+                    for (ResourceLocator locator : locators) {
+                        try {
+                            IGV.getInstance().load(locator, panel);
+                        } catch (DataLoadException de) {
+                            messages.append(de.getMessage());
+                        }
                     }
                 }
+
                 String obj = transferable.getTransferData(DataFlavor.stringFlavor).toString();
                 if (HttpUtils.isRemoteURL(obj)) {
                     IGV.getInstance().load(new ResourceLocator(obj), panel);

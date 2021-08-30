@@ -30,18 +30,12 @@
 package org.broad.igv.util;
 
 import org.apache.log4j.Logger;
-import org.broad.igv.DirectoryManager;
 import org.broad.igv.ui.util.MessageUtils;
 
 import java.io.*;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.net.URLClassLoader;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 
 /**
  * @author jrobinso
@@ -67,245 +61,58 @@ public class RuntimeUtils {
 
     }
 
-    /**
-     * Start an external process with the provided message.
-     * Also starts a separate thread to read back error stream
-     * <p/>
-     * See {@link Runtime#exec(String, String[], java.io.File)} for explanation of arguments
-     *
-     * @return
-     */
-    public static Process startExternalProcess(String[] msg, String[] envp, File dir) throws IOException {
-        Process pr = Runtime.getRuntime().exec(msg, envp, dir);
-        startErrorReadingThread(pr);
-        return pr;
-    }
+    public static String exec(String command) throws IOException, InterruptedException {
 
-    private static Process startErrorReadingThread(Process pr) {
-        final BufferedReader err = new BufferedReader(new InputStreamReader(pr.getErrorStream()));
+        List<String> commandArgs = StringUtils.breakQuotedString(command, ' ');
 
-        //Supposed to read error stream on separate thread to prevent blocking
-        Thread runnable = new Thread() {
-
-            private boolean messageDisplayed = false;
-
-            @Override
-            public void run() {
-                String line;
-                try {
-                    while ((line = err.readLine()) != null) {
-                        log.error(line);
-                        if (!messageDisplayed && line.toLowerCase().contains("error")) {
-                            MessageUtils.showMessage(line + "<br>See igv.log for more details");
-                            messageDisplayed = true;
-                        }
-                    }
-                    err.close();
-                } catch (IOException e) {
-                    log.error(e.getMessage(), e);
-                    throw new RuntimeException(e);
-                }
-            }
-        };
-        runnable.start();
-        return pr;
-    }
-
-    /**
-     * @param cmd
-     * @param envp
-     * @param dir
-     * @return
-     * @throws java.io.IOException
-     * @deprecated Use {@link #executeShellCommand(String[], String[], java.io.File)}
-     */
-    @Deprecated
-    public static String executeShellCommand(String cmd, String[] envp, File dir) throws IOException {
-        return executeShellCommand(new String[]{cmd}, envp, dir);
-    }
-
-
-    public static String executeShellCommand(String cmd[], String[] envp, File dir) throws IOException {
-        return executeShellCommand(cmd, envp, dir, true);
-    }
-
-    public static String executeShellCommand(String cmd[], String[] envp, File dir, boolean waitFor) throws IOException {
-        Process pr = startExternalProcess(cmd, envp, dir);
-
-        if(waitFor){
-            try {
-                pr.waitFor();
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
+        Process process;
+        if(commandArgs.size() == 1) {
+             process = Runtime.getRuntime().exec(command);
+        } else {
+            String [] args = commandArgs.toArray(new String []{});
+            process = Runtime.getRuntime().exec(args);
         }
 
-        InputStream inputStream = null;
-        String line = "";
-
-        try {
-            inputStream = pr.getInputStream();
-            BufferedReader buf = new BufferedReader(new InputStreamReader(inputStream));
-            StringWriter writer = new StringWriter();
-            PrintWriter pw = new PrintWriter(writer);
-            while ((line = buf.readLine()) != null) {
-                pw.println(line);
-            }
-            pw.close();
-            return writer.toString();
-        } finally {
-            if (inputStream != null) {
-                inputStream.close();
-            }
-            OutputStream os = pr.getOutputStream();
-            if(os != null){
-                os.close();
-            }
+        StringBuilder results = new StringBuilder();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+        String line;
+        while ((line = reader.readLine()) != null) {
+            results.append(line);
+            results.append('\n');
         }
-    }
+        reader.close();
 
-    /**
-     * Converts input files to file URLs
-     * @param files
-     * @return
-     */
-    private static URL[] filesToURLs(File[] files) {
-        URL[] urls = new URL[files.length];
-        for (int pp = 0; pp < files.length; pp++) {
-            try {
-                urls[pp] = HttpUtils.createURL("file://" + files[0].getAbsolutePath());
-            } catch (MalformedURLException e) {
-                log.error(e);
-            }
+        StringBuilder errors = new StringBuilder();
+        BufferedReader errorReader = new BufferedReader(
+                new InputStreamReader(process.getErrorStream()));
+        while ((line = errorReader.readLine()) != null) {
+            errors.append(line);
+            errors.append('\n');
         }
-        return urls;
-    }
+        errorReader.close();
 
-    /**
-     * Returns an array of builtin library URL locations, as well as those passed in with {@code libURLs}
-     * @param libURLs
-     * @return
-     */
-    private static URL[] addBuiltinURLs(URL[] libURLs) {
-        File[] builtin_paths = getPluginJars();
-        URL[] builtin_urls = filesToURLs(builtin_paths);
-
-        List<URL> outURLs = new ArrayList<URL>(Arrays.asList(libURLs != null ? libURLs : new URL[0]));
-        outURLs.addAll(Arrays.asList(builtin_urls));
-
-        return outURLs.toArray(new URL[outURLs.size()]);
-    }
-
-    private static URL[] getClassURLs(URL[] libURLs){
-        return addBuiltinURLs(libURLs);
-    }
-
-    /**
-     *  Create {@link java.lang.Class} object with the desired name,
-     *  looking in {@code libURLs} as well as built-in locations
-     * @param className
-     * @param libURLs
-     * @return
-     * @throws IllegalAccessException
-     * @throws InstantiationException
-     * @throws ClassNotFoundException
-     */
-    public static Class loadClassForName(String className, URL[] libURLs) throws IllegalAccessException, InstantiationException, ClassNotFoundException {
-
-        Class clazz = null;
-        //Easy way
-        try {
-            clazz = Class.forName(className);
-        } catch (ClassNotFoundException e) {
-            //Try with custom loader below
+        int exitValue = process.waitFor();
+        if (exitValue != 0) {
+            throw new RuntimeException(errorReader.toString());
         }
-        if (clazz != null) return clazz;
+        process.destroy();
 
-        //If not found, check other locations
-        URL[] allURLs = getClassURLs(libURLs);
-        ClassLoader loader = URLClassLoader.newInstance(
-                allURLs, ClassLoader.getSystemClassLoader()
-        );
-        clazz = loader.loadClass(className);
-        return clazz;
+        return results.toString();
     }
 
-    /**
-     * Create an instance of the specified class. Must have no-arg constructor
-     * @param className
-     * @param libURLs
-     * @return
-     * @throws IllegalAccessException
-     * @throws InstantiationException
-     * @throws ClassNotFoundException
-     */
-    public static Object loadInstanceForName(String className, URL[] libURLs) throws IllegalAccessException, InstantiationException, ClassNotFoundException, NoSuchMethodException, InvocationTargetException {
+    private static class StreamGobbler implements Runnable {
+        private InputStream inputStream;
+        private Consumer<String> consumer;
 
-        Class clazz = loadClassForName(className, libURLs);
-        Constructor constructor = clazz.getConstructor();
-        return constructor.newInstance();
-    }
-
-    /**
-     * Return an array of jar files in the plugin directory.
-     * Never returns null, only empty array
-     * @return
-     */
-    public static File[] getPluginJars(){
-        File builtinDir = new File(DirectoryManager.getIgvDirectory(), "plugins/");
-        File[] pluginJars =  builtinDir.listFiles(new FilenameFilter() {
-            @Override
-            public boolean accept(File dir, String name) {
-                return name.toLowerCase().endsWith(".jar");
-            }
-        });
-
-        if(pluginJars == null){
-            pluginJars = new File[0];
-        }
-        return pluginJars;
-    }
-
-    /**
-     * Add jars in plugin directory to system classloader
-     * This may not work on all systems, for security reasons
-     */
-    public static void loadPluginJars(){
-        File[] pluginJars = getPluginJars();
-        if(pluginJars != null){
-            for(File jar: pluginJars){
-                loadLibrary(jar);
-            }
+        public StreamGobbler(InputStream inputStream, Consumer<String> consumer) {
+            this.inputStream = inputStream;
+            this.consumer = consumer;
         }
 
-    }
-
-    //Not sure about the security implications of this method
-    private static boolean loadLibrary(java.io.File jar){
-        try {
-            //We are using reflection here to circumvent encapsulation; addURL is not public
-            java.net.URLClassLoader loader = (java.net.URLClassLoader)ClassLoader.getSystemClassLoader();
-            java.net.URL url = jar.toURI().toURL();
-
-            //Skip if already loaded
-            for (java.net.URL it : java.util.Arrays.asList(loader.getURLs())){
-                if (it.equals(url)){
-                    return false;
-                }
-            }
-
-            java.lang.reflect.Method method = java.net.URLClassLoader.class.getDeclaredMethod(
-                    "addURL",
-                    new Class[]{java.net.URL.class}
-            );
-            method.setAccessible(true);
-            method.invoke(loader, new Object[]{url});
-            return true;
-        } catch (Exception e){
-            log.warn("Error loading jar: " + e.getMessage());
-            return false;
+        @Override
+        public void run() {
+            new BufferedReader(new InputStreamReader(inputStream)).lines()
+                    .forEach(consumer);
         }
     }
-
-
 }

@@ -27,6 +27,7 @@ package org.broad.igv.util;
 
 import biz.source_code.base64Coder.Base64Coder;
 import htsjdk.samtools.seekablestream.SeekableStream;
+import htsjdk.samtools.util.RuntimeIOException;
 import htsjdk.samtools.util.ftp.FTPClient;
 import htsjdk.samtools.util.ftp.FTPStream;
 import org.apache.log4j.Logger;
@@ -83,6 +84,8 @@ public class HttpUtils {
     private String defaultUserName = null;
     private char[] defaultPassword = null;
 
+    private Map<String, Collection<String>> headerMap = new HashMap<>();
+
     // static provided to support unit testing
     private static boolean BYTE_RANGE_DISABLED = false;
     private Map<URL, Boolean> headURLCache = new HashMap<URL, Boolean>();
@@ -129,22 +132,33 @@ public class HttpUtils {
      * @throws MalformedURLException
      */
     public static URL createURL(String urlString) throws MalformedURLException {
-
-        urlString = mapURL(urlString.trim());
-
-        return new URL(urlString);
-    }
-
-    public static String mapURL(String urlString) throws MalformedURLException {
-
-        if (urlString.startsWith("gs://")) {
-            urlString = GoogleUtils.translateGoogleCloudURL(urlString);
-        } else if (AmazonUtils.isAwsS3Path(urlString)) {
+        if (AmazonUtils.isAwsS3Path(urlString)) {
             try {
                 urlString = AmazonUtils.translateAmazonCloudURL(urlString);
             } catch (IOException e) {
-                log.error(e);
+                log.error("Error translating amazon cloud URL: " + urlString, e);
+                throw new RuntimeException(e);
             }
+        } else {
+            urlString = mapURL(urlString.trim());
+        }
+        return new URL(urlString);
+    }
+
+    /**
+     * Map a URL, for example from a deprecated host or non-http scheme, to a stable newer form. Sort of a pre-request
+     * redirect.  This should be used to map to a stable, long-term URL, not to for example time-limited signed URLs.
+     *
+     * @param urlString
+     * @return
+     * @throws MalformedURLException
+     */
+    public static String mapURL(String urlString) throws MalformedURLException {
+
+        if (urlString.startsWith("htsget://")) {
+            urlString = urlString.replace("htsget://", "https://");
+        } else if (urlString.startsWith("gs://")) {
+            urlString = GoogleUtils.translateGoogleCloudURL(urlString);
         }
 
         if (GoogleUtils.isGoogleCloud(urlString)) {
@@ -152,7 +166,6 @@ public class HttpUtils {
                 urlString = URLUtils.addParameter(urlString, "alt=media");
             }
         }
-
         String host = URLUtils.getHost(urlString);
         if (host.equals("igv.broadinstitute.org")) {
             urlString = urlString.replace("igv.broadinstitute.org", "s3.amazonaws.com/igv.broadinstitute.org");
@@ -201,19 +214,8 @@ public class HttpUtils {
 
 
     public String getContentsAsString(URL url, Map<String, String> headers) throws IOException {
-
-        InputStream is = null;
-
-        HttpURLConnection conn = openConnection(url, headers);
-        try {
-            is = conn.getInputStream();
-            return readContents(is);
-        } catch (IOException e) {
-            readErrorStream(conn);  // Consume content
-            throw e;
-        } finally {
-            if (is != null) is.close();
-        }
+        byte[] bytes = this.getContentsAsBytes(url, headers);
+        return new String(bytes, "UTF-8");
     }
 
     public String getContentsAsGzippedString(URL url) throws IOException {
@@ -222,6 +224,20 @@ public class HttpUtils {
         try {
             is = conn.getInputStream();
             return readContents(new GZIPInputStream(is));
+        } catch (IOException e) {
+            readErrorStream(conn);  // Consume content
+            throw e;
+        } finally {
+            if (is != null) is.close();
+        }
+    }
+
+    public byte[] getContentsAsBytes(URL url, Map<String, String> headers) throws IOException {
+        InputStream is = null;
+        HttpURLConnection conn = openConnection(url, headers);
+        try {
+            is = conn.getInputStream();
+            return is.readAllBytes();
         } catch (IOException e) {
             readErrorStream(conn);  // Consume content
             throw e;
@@ -569,76 +585,6 @@ public class HttpUtils {
     }
 
 
-    public void uploadGenomeSpaceFile(String uri, File file, Map<String, String> headers) throws IOException {
-
-        HttpURLConnection urlconnection = null;
-        OutputStream bos = null;
-
-        URL url = HttpUtils.createURL(uri);
-        urlconnection = openConnection(url, headers, "PUT");
-        urlconnection.setDoOutput(true);
-        urlconnection.setDoInput(true);
-
-        bos = new BufferedOutputStream(urlconnection.getOutputStream());
-        BufferedInputStream bis = new BufferedInputStream(new FileInputStream(file));
-        int i;
-        // read byte by byte until end of stream
-        while ((i = bis.read()) > 0) {
-            bos.write(i);
-        }
-        bos.close();
-        int responseCode = urlconnection.getResponseCode();
-
-        // Error messages below.
-        if (responseCode >= 400) {
-            String message = readErrorStream(urlconnection);
-            throw new IOException("Error uploading " + file.getName() + " : " + message);
-        }
-    }
-
-
-    public String createGenomeSpaceDirectory(URL url, String body) throws IOException {
-
-        HttpURLConnection urlconnection = null;
-        OutputStream bos = null;
-
-        Map<String, String> headers = new HashMap<String, String>();
-        headers.put("Content-Type", "application/json");
-        headers.put("Content-Length", String.valueOf(body.getBytes().length));
-
-        urlconnection = openConnection(url, headers, "PUT");
-        urlconnection.setDoOutput(true);
-        urlconnection.setDoInput(true);
-
-        bos = new BufferedOutputStream(urlconnection.getOutputStream());
-        bos.write(body.getBytes());
-        bos.close();
-        int responseCode = urlconnection.getResponseCode();
-
-        // Error messages below.
-        StringBuffer buf = new StringBuffer();
-        InputStream inputStream;
-
-        if (responseCode >= 200 && responseCode < 300) {
-            inputStream = urlconnection.getInputStream();
-        } else {
-            inputStream = urlconnection.getErrorStream();
-        }
-        BufferedReader br = new BufferedReader(new InputStreamReader(inputStream));
-        String nextLine;
-        while ((nextLine = br.readLine()) != null) {
-            buf.append(nextLine);
-            buf.append('\n');
-        }
-        inputStream.close();
-
-        if (responseCode >= 200 && responseCode < 300) {
-            return buf.toString();
-        } else {
-            throw new IOException("Error creating GS directory: " + buf.toString());
-        }
-    }
-
     /**
      * Code for disabling SSL certification
      */
@@ -714,7 +660,6 @@ public class HttpUtils {
      * @throws java.io.IOException
      */
     private HttpURLConnection openConnection(
-
             URL url, Map<String, String> requestProperties, String method, int redirectCount, int retries) throws IOException {
 
         // if we're already seen a redirect for this URL, use the updated one
@@ -728,13 +673,22 @@ public class HttpUtils {
                 log.debug("Removing expired URL from redirection cache: " + url);
                 redirectCache.remove(url);
             }
-
         }
 
         // if the url points to a openid location instead of a oauth2.0 location, used the fina and replace
         // string to dynamically map url - dwm08
         if (url.getHost().equals(GoogleUtils.GOOGLE_API_HOST) && OAuthUtils.findString != null && OAuthUtils.replaceString != null) {
             url = HttpUtils.createURL(url.toExternalForm().replaceFirst(OAuthUtils.findString, OAuthUtils.replaceString));
+        }
+
+        // If a presigned URL, check its validity and update if needed
+        if (AmazonUtils.isPresignedURL(url.toExternalForm())) {
+            url = new URL(AmazonUtils.updatePresignedURL(url.toExternalForm()));
+        }
+
+        // If an S3 url, obtain a signed https url
+        if (AmazonUtils.isAwsS3Path(url.toExternalForm())) {
+            url = new URL(AmazonUtils.translateAmazonCloudURL(url.toExternalForm()));
         }
 
         //Encode query string portions
@@ -744,10 +698,17 @@ public class HttpUtils {
         }
 
         //Encode base portions. Right now just spaces, most common case
-        //TODO This is a hack and doesn't work for all characters which need it
         if (StringUtils.countChar(url.toExternalForm(), ' ') > 0) {
             String newPath = url.toExternalForm().replaceAll(" ", "%20");
             url = HttpUtils.createURL(newPath);
+        }
+
+        // If this is a Google URL and we have set a userProject ("requestor pays') use it.
+        if (GoogleUtils.isGoogleURL(url.toExternalForm()) &&
+                GoogleUtils.getProjectID() != null &&
+                GoogleUtils.getProjectID().length() > 0 &&
+                !hasQueryParameter(url, "userProject")) {
+            url = addQueryParameter(url, "userProject", GoogleUtils.getProjectID());
         }
 
         Proxy sysProxy = null;
@@ -794,9 +755,8 @@ public class HttpUtils {
             if (PreferencesManager.getPreferences().getAsBoolean("DEBUG.PROXY")) {
                 log.info("PROXY NOT USED ");
                 if (proxySettings.getWhitelist().contains(url.getHost())) {
-                    log.info(url.getHost() + " is whitelisted");
+                    //log.info(url.getHost() + " is whitelisted");
                 }
-                ;
             }
             conn = (HttpURLConnection) url.openConnection();
         }
@@ -818,6 +778,17 @@ public class HttpUtils {
                 conn.setRequestProperty(prop.getKey(), prop.getValue());
             }
         }
+
+        Collection<String> headers = headerMap.get(url.getHost());
+        if (headers != null) {
+            for (String h : headers) {
+                String[] kv = h.split(":");
+                if (kv.length == 2) {
+                    conn.setRequestProperty(kv[0], kv[1]);
+                 }
+            }
+        }
+
         conn.setRequestProperty("User-Agent", Globals.applicationString());
 
         // If this is a Google URL and we have an access token use it.
@@ -825,9 +796,6 @@ public class HttpUtils {
             String token = OAuthUtils.getInstance().getProvider().getAccessToken();
             if (token != null) {
                 conn.setRequestProperty("Authorization", "Bearer " + token);
-            }
-            if (GoogleUtils.getProjectID() != null && GoogleUtils.getProjectID().length() > 0) {
-                url = addQueryParameter(url, "userProject", GoogleUtils.getProjectID());
             }
         }
 
@@ -943,14 +911,24 @@ public class HttpUtils {
         return (host.equals("dl.dropboxusercontent.com") || host.equals("www.dropbox.com"));
     }
 
-    private URL addQueryParameter(URL url, String userProject, String projectID) {
+    private URL addQueryParameter(URL url, String param, String value) {
         String urlString = url.toExternalForm();
-        urlString = urlString + (urlString.contains("?") ? "&" : "?") + userProject + "=" + projectID;
+        urlString = urlString + (urlString.contains("?") ? "&" : "?") + param + "=" + value;
         try {
             return new URL(urlString);
         } catch (MalformedURLException e) {
             log.error("Error adding query parameter", e);
             return url;
+        }
+    }
+
+    private boolean hasQueryParameter(URL url, String parameter) {
+        String urlstring = url.toExternalForm();
+        if (urlstring.contains("?")) {
+            int idx = urlstring.indexOf('?');
+            return urlstring.substring(idx).contains(parameter + "=");
+        } else {
+            return false;
         }
     }
 
@@ -1003,7 +981,7 @@ public class HttpUtils {
                     boolean byteRangeTestSuccess = testByteRange(url);
 
                     if (byteRangeTestSuccess) {
-                        log.info("Range-byte request succeeded");
+                        //log.info("Range-byte request succeeded");
                     } else {
                         log.info("Range-byte test failed -- Host: " + host +
                                 " does not support range-byte requests or there is a problem with client network environment.");
@@ -1034,6 +1012,38 @@ public class HttpUtils {
         boolean byteRangeTestSuccess = (statusCode == 206);
         readFully(conn.getInputStream(), new byte[10]);
         return byteRangeTestSuccess;
+    }
+
+    /**
+     * Add an http header string to be applied the the specified URLs.  Used to support command line specification
+     * of authentication headers
+     *
+     * @param headers
+     * @param urls
+     */
+    public void addHeaders(Collection<String> headers, List<String> urls) {
+        for (String u : urls) {
+            if (isRemoteURL(u)) {
+                try {
+                    URL url = new URL(mapURL(u));
+                    headerMap.put(url.getHost(), headers);
+                    System.out.println("Added " + url.getHost() + " -> " + headers);
+
+                } catch (MalformedURLException e) {
+                    log.error("Error parsing URL " + u, e);
+                }
+            }
+        }
+    }
+
+
+    private String stripParameters(String url) {
+        int idx = url.indexOf("?");
+        if (idx > 0) {
+            return url.substring(0, idx);
+        } else {
+            return url;
+        }
     }
 
     public void shutdown() {

@@ -25,15 +25,17 @@
 
 
 /*
-* Genome.java
-*
-* Created on November 9, 2007, 9:05 AM
-*
-* To change this template, choose Tools | Template Manager
-* and open the template in the editor.
-*/
+ * Genome.java
+ *
+ * Created on November 9, 2007, 9:05 AM
+ *
+ * To change this template, choose Tools | Template Manager
+ * and open the template in the editor.
+ */
 package org.broad.igv.feature.genome;
 
+import com.google.gson.JsonElement;
+import org.apache.commons.math3.stat.StatUtils;
 import org.apache.log4j.Logger;
 import org.broad.igv.Globals;
 import org.broad.igv.feature.Chromosome;
@@ -52,12 +54,14 @@ import java.util.*;
 public class Genome {
 
     private static Logger log = Logger.getLogger(Genome.class);
-    public static final int MAX_WHOLE_GENOME = 10000;
+    public static final int MAX_WHOLE_GENOME_LONG = 100;
+
+    private static Object aliasLock = new Object();
 
     private String id;
     private String displayName;
     private List<String> chromosomeNames;
-    private ArrayList<String> longChromosomeNames;
+    private List<String> longChromosomeNames;
     private LinkedHashMap<String, Chromosome> chromosomeMap;
     private long totalLength = -1;
     private long nominalLength = -1;
@@ -67,15 +71,10 @@ public class Genome {
     private FeatureTrack geneTrack;
     private String species;
     private String ucscID;
-    private GenomeDescriptor descriptor;   // Can be null
+    private String blatDB;
     private ArrayList<ResourceLocator> annotationResources;
+    private boolean showWholeGenomeView = true;
 
-
-    public Genome(String id, String displayName, Sequence sequence, boolean chromosOrdered, GenomeDescriptor descriptor) {
-        this(id, displayName, sequence, chromosOrdered);
-        this.descriptor = descriptor;
-
-    }
 
     /**
      * @param id
@@ -86,8 +85,8 @@ public class Genome {
     public Genome(String id, String displayName, Sequence sequence, boolean chromosOrdered) {
         this.id = id;
         this.displayName = displayName;
-        this.chrAliasTable = new HashMap<String, String>();
-        this.sequence = sequence;
+        this.chrAliasTable = new HashMap<>();
+        this.sequence = (sequence instanceof InMemorySequence) ? sequence : new SequenceWrapper(sequence);
         chromosomeNames = sequence.getChromosomeNames();
         this.ucscID = ucsdIDMap.containsKey(id) ? ucsdIDMap.get(id) : id;
 
@@ -143,9 +142,13 @@ public class Genome {
     public String getCanonicalChrName(String str) {
         if (str == null) {
             return str;
-        } else if (chrAliasTable.containsKey(str)){
+        } else if (chrAliasTable.containsKey(str)) {
             return chrAliasTable.get(str);
         } else {
+            // Add entry, which effectively interns the string
+            synchronized (aliasLock) {
+                chrAliasTable.put(str, str);
+            }
             return str;
         }
     }
@@ -153,15 +156,6 @@ public class Genome {
     public boolean isKnownChr(String str) {
         return chrAliasTable.containsKey(str);
     }
-
-    public GenomeDescriptor getDescriptor() {
-        return descriptor;
-    }
-
-    public Map<String, String> getChrAliasTable() {
-        return chrAliasTable;
-    }
-
 
     /**
      * Populate the chr alias table.  The input is a collection of chromosome synonym lists.  The
@@ -171,7 +165,8 @@ public class Genome {
      */
     public void addChrAliases(Collection<Collection<String>> synonymsList) {
 
-        if (chrAliasTable == null) chrAliasTable = new HashMap<String, String>();
+        if (synonymsList == null) return;
+        if (chrAliasTable == null) chrAliasTable = new HashMap<>();
 
         // Convert names to a set for fast "contains" testing.
         Set<String> chrNameSet = new HashSet<String>(chromosomeNames);
@@ -240,7 +235,7 @@ public class Genome {
             } else {
                 autoAliases.put("chr" + name, name);
             }
-            if(count++ == 50) break;
+            if (count++ == 50) break;
         }
 
         // Special case for human and mouse -- for other genomes define these in the alias file.
@@ -293,7 +288,7 @@ public class Genome {
      * @return
      */
     public String getHomeChromosome() {
-        if (chromosomeNames.size() == 1 || chromosomeNames.size() > MAX_WHOLE_GENOME) {
+        if (showWholeGenomeView == false || chromosomeNames.size() == 1 || getLongChromosomeNames().size() > MAX_WHOLE_GENOME_LONG) {
             return chromosomeNames.get(0);
         } else {
             return Globals.CHR_ALL;
@@ -384,6 +379,18 @@ public class Genome {
 
     public String getId() {
         return id;
+    }
+
+    public String getBlatDB() {
+        return blatDB != null ? blatDB : id;
+    }
+
+    public void setBlatDB(String blatDB) {
+        this.blatDB = blatDB;
+    }
+
+    public void setUcscID(String ucscID) {
+        this.ucscID = ucscID;
     }
 
     public String getUCSCId() {
@@ -502,44 +509,66 @@ public class Genome {
     }
 
     /**
-     * Return "getChromosomeNames()" with small chromosomes removed.
+     * Return names of "long" chromosomes relative to a fraction of the median length.  The intent here is to
+     * remove small contigs in an otherwise well assembled genome to support a "whole genome" view.  We first sort
+     * chromosomes in length order, then look for the first large break in size.
      *
      * @return
      */
     public List<String> getLongChromosomeNames() {
+
         if (longChromosomeNames == null) {
-            longChromosomeNames = new ArrayList<String>(getAllChromosomeNames().size());
-            long genomeLength = getTotalLength();
-            int maxChromoLength = -1;
-            for (String chrName : getAllChromosomeNames()) {
-                Chromosome chr = getChromosome(chrName);
-                int length = chr.getLength();
-                maxChromoLength = Math.max(maxChromoLength, length);
-                if (length > (genomeLength / 3000)) {
-                    longChromosomeNames.add(chrName);
+            longChromosomeNames = new ArrayList<>();
+            if(chromosomeMap.size() < 100) {
+                // Keep all chromosomes within 10% of the mean in length
+                double[] lengths = new double[chromosomeMap.size()];
+                int idx = 0;
+                for (Chromosome c : chromosomeMap.values()) {
+                    lengths[idx++] = c.getLength();
+                }
+                double mean = StatUtils.mean(lengths);
+                double std = Math.sqrt(StatUtils.variance(lengths));
+                double min = 0.1*mean;
+                for (String chr : getAllChromosomeNames()) {
+                    if (chromosomeMap.get(chr).getLength() > min) {
+                        longChromosomeNames.add(chr);
+                    }
                 }
             }
 
-            /**
-             * At this point, we should have some long chromosome names.
-             * However, some genomes (draft ones perhaps) maybe have many small ones
-             * which aren't big enough. We arbitrarily take those which are above
-             * half the size of the max, only if the first method didn't work.
-             */
-            if (longChromosomeNames.size() == 0) {
-                for (String chrName : getAllChromosomeNames()) {
-                    Chromosome chr = getChromosome(chrName);
-                    int length = chr.getLength();
-                    if (length > maxChromoLength / 2) {
-                        longChromosomeNames.add(chrName);
+            else {
+                // Long list, likely many small contigs.  Search for a break between long (presumably assembled)
+                // chromosomes and small contigs.
+                List<Chromosome> allChromosomes = new ArrayList<>(chromosomeMap.values());
+                allChromosomes.sort((c1, c2) -> c2.getLength() - c1.getLength());
+
+                Chromosome lastChromosome = null;
+                Set<String> tmp = new HashSet<>();
+                for (Chromosome c : allChromosomes) {
+                    if (lastChromosome != null) {
+                        double delta = lastChromosome.getLength() - c.getLength();
+                        if (delta / lastChromosome.getLength() > 0.7) {
+                            break;
+                        }
+                    }
+                    tmp.add(c.getName());
+                    lastChromosome = c;
+                }
+
+
+                for (String chr : getAllChromosomeNames()) {
+                    if (tmp.contains(chr)) {
+                        longChromosomeNames.add(chr);
                     }
                 }
             }
         }
         return longChromosomeNames;
+
     }
 
     public long getNominalLength() {
+
         if (nominalLength < 0) {
             nominalLength = 0;
             for (String chrName : getLongChromosomeNames()) {
@@ -551,12 +580,13 @@ public class Genome {
     }
 
 
-    // TODO A hack (obviously),  we need to record a species in the genome definitions
+    // TODO A hack (obviously),  we need to record a species in the genome definitions to support old style
+    // blat servers.
     private static Map<String, String> ucscSpeciesMap;
 
     private static synchronized String getSpeciesForID(String id) {
         if (ucscSpeciesMap == null) {
-            ucscSpeciesMap = new HashMap<String, String>();
+            ucscSpeciesMap = new HashMap<>();
 
             InputStream is = null;
 
@@ -615,5 +645,30 @@ public class Genome {
 
     public ArrayList<ResourceLocator> getAnnotationResources() {
         return annotationResources;
+    }
+
+
+    /**
+     * Mock genome for unit tests
+     */
+
+    private Genome(String id) {
+        this.id = id;
+    }
+
+    ;
+
+    public static Genome mockGenome = new Genome("hg19");
+
+    public void setShowWholeGenomeView(boolean showWholeGenomeView) {
+        this.showWholeGenomeView = showWholeGenomeView;
+    }
+
+    public boolean getShowWholeGenomeView() {
+        return showWholeGenomeView;
+    }
+
+    public void setLongChromosomeNames(List<String> chrNames) {
+        this.longChromosomeNames = chrNames;
     }
 }

@@ -25,13 +25,7 @@
 
 package org.broad.igv.feature.genome;
 
-import org.broad.igv.feature.genome.fasta.FastaUtils;
-import org.broad.igv.util.HttpUtils;
-
-import java.io.File;
-import java.io.IOException;
 import java.util.Objects;
-import java.util.zip.ZipException;
 
 /**
  * A container for specific genome information which can be used to
@@ -42,13 +36,11 @@ public class GenomeListItem {
     private String displayableName;
     private String path;
     private String id;
-    private boolean hasDownloadedSequence = false;
-    private long lastModified = 0;
 
-    public static final GenomeListItem ITEM_MORE;
+    public static final GenomeListItem DOWNLOAD_ITEM;
 
     static {
-        ITEM_MORE = new GenomeListItem("More...", "", "More...");
+        DOWNLOAD_ITEM = new GenomeListItem("More...", "", "More...");
     }
 
 
@@ -66,13 +58,7 @@ public class GenomeListItem {
     public static GenomeListItem fromString(String str) {
         String[] tokens = str.split("\t");
         GenomeListItem item = new GenomeListItem(tokens[1], tokens[2], tokens[0]);
-        item.hasDownloadedSequence = Boolean.parseBoolean(tokens[3]);
         return item;
-    }
-
-
-    public String printString() {
-        return id + "\t" + displayableName + "\t" + path + "\t" + String.valueOf(hasDownloadedSequence);
     }
 
     public String getDisplayableName() {
@@ -114,12 +100,4 @@ public class GenomeListItem {
         return Objects.hash(path, id);
     }
 
-
-    public void setLastModified(long lastModified) {
-        this.lastModified = lastModified;
-    }
-
-    public long getLastModified() {
-        return lastModified;
-    }
 }

@@ -50,7 +50,8 @@ public class UIConstants {
     // Menu tooltips
     static final public String LOAD_TRACKS_TOOLTIP = "Load tracks or sample information";
     static final public String LOAD_SERVER_DATA_TOOLTIP = "Load tracks or sample information from a server";
-    static final public String SAVE_IMAGE_TOOLTIP = "Capture and save an image";
+    static final public String SAVE_PNG_IMAGE_TOOLTIP = "Capture and save a PNG image";
+    static final public String SAVE_SVG_IMAGE_TOOLTIP = "Capture and save an SVG image";
     static final public String NEW_SESSION_TOOLTIP = "Create a new session";
     static final public String SAVE_SESSION_TOOLTIP = "Save the current session";
     static final public String OPEN_SESSION_TOOLTIP = "Load a session";
@@ -87,9 +88,6 @@ public class UIConstants {
     static final public String PREFERENCE_TOOLTIP = "Set user specific preferences";
     static final public String SHOW_HEATMAP_LEGEND_TOOLTIP = "Edit color legends and scales";
 
-    public static Font boldFont = FontManager.getFont(Font.BOLD, 12);
-
-
     final public static String OVERWRITE_SESSION_MESSAGE =
             "<html>Opening a session will unload all current data. " + "<br>Are you sure you wish to continue?";
     final public static String CANNOT_ACCESS_SERVER_GENOME_LIST = "The Genome server is currently inaccessible.";
@@ -100,9 +98,8 @@ public class UIConstants {
 
     final public static Color LIGHT_GREY = new Color(238, 239, 240);
 
-    final public static Color TRACK_BORDER_GRAY = new Color(200, 200, 210);
+    final public static Color TRACK_BORDER_GRAY = new Color(240, 240, 240);
 
-    public static Color NO_DATA_COLOR = new Color(200, 200, 200, 150);
     static final public String REMOVE_GENOME_LIST_MENU_ITEM = "Remove Imported Genomes...";
     static final public String GENOME_LIST_SEPARATOR = "--SEPARATOR--";
     static final public int DEFAULT_DOUBLE_CLICK_INTERVAL = 400;

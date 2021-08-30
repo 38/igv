@@ -22,16 +22,17 @@ public class FastaBlockCompressedSequence extends FastaIndexedSequence {
 
     public FastaBlockCompressedSequence(String path) throws IOException {
 
-        this(path, null);
+        this(path, null, null);
     }
 
-    public FastaBlockCompressedSequence(String path, String indexPath) throws IOException {
+    public FastaBlockCompressedSequence(String path, String gziIndexPath, String indexPath) throws IOException {
 
-        super(path);
+        super(path, indexPath);
 
-        if(indexPath == null) indexPath = path + ".gzi";
-
-        readGziMappings(indexPath);
+        if (gziIndexPath == null) {
+            gziIndexPath = path + ".gzi";
+        }
+        readGziMappings(gziIndexPath);
     }
 
     @Override
@@ -89,15 +90,19 @@ public class FastaBlockCompressedSequence extends FastaIndexedSequence {
         InputStream is = null;
         LittleEndianInputStream dis = null;
 
-        is = ParsingUtils.openInputStream(gziPath);
-        dis = new LittleEndianInputStream(new BufferedInputStream(is));
+        try {
+            is = ParsingUtils.openInputStream(gziPath);
+            dis = new LittleEndianInputStream(new BufferedInputStream(is));
 
-        int nEntries = (int) dis.readLong();
+            int nEntries = (int) dis.readLong();
 
-        gziMappings = new Mapping[nEntries];
+            gziMappings = new Mapping[nEntries];
 
-        for (int i = 0; i < nEntries; i++) {
-            gziMappings[i] = new Mapping(dis.readLong(), dis.readLong());
+            for (int i = 0; i < nEntries; i++) {
+                gziMappings[i] = new Mapping(dis.readLong(), dis.readLong());
+            }
+        } finally {
+            is.close();
         }
 
     }

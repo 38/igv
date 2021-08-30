@@ -31,6 +31,7 @@ import org.broad.igv.Globals;
 import org.broad.igv.feature.genome.GenomeManager;
 import org.broad.igv.google.OAuthUtils;
 import org.broad.igv.ui.IGV;
+import org.broad.igv.ui.util.UIUtilities;
 import org.broad.igv.util.StringUtils;
 
 import java.awt.*;
@@ -81,6 +82,7 @@ public class CommandListener implements Runnable {
     public static synchronized void start(int port) {
         listener = new CommandListener(port);
         listener.listenerThread.start();
+        isListening = true;
     }
 
 
@@ -113,15 +115,14 @@ public class CommandListener implements Runnable {
      */
     public void run() {
 
-        CommandExecutor cmdExe = new CommandExecutor(IGV.getInstance());
-
         try {
+            CommandExecutor cmdExe = new CommandExecutor(IGV.getInstance());
+
             serverSocket = new ServerSocket(port);
             log.info("Listening on port " + port);
             currentListenerPort = port;
             isListening = true;
             while (!halt) {
-            	
                 clientSocket = serverSocket.accept();
                 processClientSession(cmdExe);
                 if (clientSocket != null) {
@@ -135,8 +136,6 @@ public class CommandListener implements Runnable {
                     }
                 }
             }
-
-
         } catch (java.net.BindException e) {
             log.error(e);
             currentListenerPort = -1;
@@ -144,7 +143,6 @@ public class CommandListener implements Runnable {
         } catch (ClosedByInterruptException e) {
             log.error(e);
             isListening = false;
-
         } catch (IOException e) {
         	isListening = false;
             if (!halt) {
@@ -183,7 +181,7 @@ public class CommandListener implements Runnable {
                             headers.put(tokens[0].trim(), tokens[1].trim());
                         }
                     }
-                    log.info(cmd);
+                    //log.info(cmd);
 
                     String command = null;
                     Map<String, String> params = null;
@@ -215,8 +213,6 @@ public class CommandListener implements Runnable {
                         }
 
                         // Process the request.
-
-
                         String result = processGet(command, params, cmdExe);
 
                         // If no callback was specified write back response now
@@ -233,11 +229,19 @@ public class CommandListener implements Runnable {
 
                 } else {
                     // Port command
-                    Globals.setBatch(true);
-                    Globals.setSuppressMessages(true);
-                    final String response = cmdExe.execute(inputLine);
-                    out.println(response);
-                    out.flush();
+                    try {
+                        Globals.setBatch(true);
+                        String finalInputLine = inputLine;
+                        PrintWriter finalOut = out;
+                        UIUtilities.invokeAndWaitOnEventThread(() -> {
+                            final String response = cmdExe.execute(finalInputLine);
+                            finalOut.println(response);
+                            finalOut.flush();
+                        });
+
+                    } finally {
+                        Globals.setBatch(false);
+                    }
                 }
             }
         } catch (IOException e) {

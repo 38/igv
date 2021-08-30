@@ -68,15 +68,15 @@ public class MessageUtils {
     }
 
     public static void showMessage(String message) {
-        showMessage(Level.INFO, message);
+        showMessage(null, message);
     }
 
-    public static synchronized void showMessage(Level level, String message) {
+    public static void showMessage(Level level, String message) {
 
-        log.log(level, message);
+        if(level != null) log.log(level, message);
         boolean showDialog = !(Globals.isHeadless() || Globals.isSuppressMessages() || Globals.isTesting() || Globals.isBatch());
         if (showDialog) {
-            UIUtilities.invokeOnEventThread(() -> {
+            UIUtilities.invokeAndWaitOnEventThread(() -> {
                 // Always use HTML for message displays, but first remove any embedded <html> tags.
                 String dlgMessage = "<html>" + message.replaceAll("<html>", "");
                 Frame parent = IGV.hasInstance() ? IGV.getMainFrame() : null;

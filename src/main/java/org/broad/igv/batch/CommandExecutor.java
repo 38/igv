@@ -32,19 +32,18 @@ package org.broad.igv.batch;
 
 import org.apache.log4j.Logger;
 import org.broad.igv.Globals;
-import org.broad.igv.event.DataLoadedEvent;
-import org.broad.igv.event.IGVEventBus;
-import org.broad.igv.event.IGVEventObserver;
-import org.broad.igv.event.RepaintEvent;
 import org.broad.igv.feature.Locus;
+import org.broad.igv.feature.Range;
 import org.broad.igv.feature.RegionOfInterest;
+import org.broad.igv.feature.Strand;
 import org.broad.igv.feature.genome.GenomeManager;
-import org.broad.igv.google.Ga4ghAPIHelper;
 import org.broad.igv.google.OAuthUtils;
 import org.broad.igv.prefs.Constants;
 import org.broad.igv.prefs.PreferencesManager;
 import org.broad.igv.renderer.DataRange;
 import org.broad.igv.sam.AlignmentTrack;
+import org.broad.igv.track.AttributeManager;
+import org.broad.igv.track.DataTrack;
 import org.broad.igv.track.RegionScoreType;
 import org.broad.igv.track.Track;
 import org.broad.igv.ui.IGV;
@@ -61,8 +60,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.List;
 import java.util.*;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 
 public class CommandExecutor {
 
@@ -81,7 +78,7 @@ public class CommandExecutor {
         List<String> args = new ArrayList(tokens.length);
         for (String s : tokens) {
             if (s.trim().length() > 0) {
-                args.add(s.trim());
+                args.add(StringUtils.stripQuotes(s.trim()));
             }
         }
         return args;
@@ -100,21 +97,17 @@ public class CommandExecutor {
                 return "Empty command string";
             }
 
-
             String cmd = args.get(0).toLowerCase();
             String param1 = args.size() > 1 ? args.get(1) : null;
             String param2 = args.size() > 2 ? args.get(2) : null;
             String param3 = args.size() > 3 ? args.get(3) : null;
             String param4 = args.size() > 4 ? args.get(4) : null;
 
-
             if (cmd.equalsIgnoreCase("echo")) {
                 result = cmd;
-            } else if (cmd.equalsIgnoreCase("gotoimmediate")) {
-                return gotoImmediate(args);
-            } else if (cmd.equalsIgnoreCase("goto")) {
+            } else if (cmd.equalsIgnoreCase("gotoimmediate") || cmd.equalsIgnoreCase("goto")) {
                 result = goto1(args);
-            } else if (cmd.equalsIgnoreCase("gototrack")) {
+            } else if (cmd.equalsIgnoreCase("scrolltotrack") || cmd.equalsIgnoreCase("gototrack")) {
                 boolean res = this.igv.scrollToTrack(param1);
                 result = res ? "OK" : String.format("Error: Track %s not found", param1);
             } else if (cmd.equalsIgnoreCase("snapshotdirectory")) {
@@ -131,12 +124,28 @@ public class CommandExecutor {
             } else if (cmd.equalsIgnoreCase("region")) {
                 defineRegion(param1, param2, param3, param4);
             } else if (cmd.equalsIgnoreCase("sort")) {
-                sort(param1, param2, param3, param4);
+                result = sort(param1, param2, param3, param4);
             } else if (cmd.equalsIgnoreCase("group")) {
-                group(param1, param2);
+                result = group(param1, param2);
+            } else if (cmd.equalsIgnoreCase("colorBy")) {
+                result = colorBy(param1, param2);
             } else if (cmd.equalsIgnoreCase("collapse")) {
                 String trackName = parseTrackName(param1);
                 igv.setTrackDisplayMode(Track.DisplayMode.COLLAPSED, trackName);
+            } else if (cmd.equalsIgnoreCase("setSequenceStrand")) {
+                igv.setSequenceTrackStrand(Strand.fromString(param1));
+            } else if (cmd.equalsIgnoreCase("setSequenceShowTranslation")) {
+                boolean showTranslation;
+                try {
+                    if (param1.equalsIgnoreCase("true") || param1.equalsIgnoreCase("false")) {
+                        showTranslation = Boolean.valueOf(param1);
+                    } else {
+                        return "ERROR: showTranslation value (" + param1 + ")is not 'true' or 'false'.";
+                    }
+                } catch (IllegalArgumentException e) {
+                    return e.getMessage();
+                }
+                igv.setSequenceShowTranslation(showTranslation);
             } else if (cmd.equalsIgnoreCase("expand")) {
                 String trackName = parseTrackName(param1);
                 igv.setTrackDisplayMode(Track.DisplayMode.EXPANDED, trackName);
@@ -180,6 +189,16 @@ public class CommandExecutor {
                 FrameManager.incrementZoom(-1);
             } else if ("oauth".equals(cmd)) {
                 OAuthUtils.getInstance().getProvider().setAccessToken(param1);
+            } else if (cmd.equalsIgnoreCase("sortByAttribute")) {
+                result = sortByAttribute(args);
+            } else if (cmd.equalsIgnoreCase("fitTracks")) {
+                igv.fitTracksToPanel();
+            } else if (cmd.equalsIgnoreCase("showAttributes")) {
+                result = this.showAttributes(args);
+            } else if (cmd.equalsIgnoreCase("showDataRange")) {
+                result = this.setShowDataRange(param1, param2);
+            } else if (cmd.equalsIgnoreCase("setTrackHeight")) {
+                result = this.setTrackHeight(param1, param2);
             } else {
                 result = "UNKOWN COMMAND: " + command;
                 log.error(result);
@@ -200,23 +219,57 @@ public class CommandExecutor {
             }
             log.debug("Finished sleeping");
 
-        } catch (
-                IOException e
-        ) {
+        } catch (IOException e) {
             log.error(e);
             result = "Error: " + e.getMessage();
         }
 
-        log.info(result);
+        log.debug(result);
 
         return result;
+    }
+
+    /**
+     * Sort tracks by one or more sample attribute values.
+     *
+     * @param args
+     * @return
+     */
+    private String sortByAttribute(List<String> args) {
+
+        int nattributes = (args.size() - 1) / 2;
+        if (nattributes == 0 || (args.size() - 1) % 2 != 0) {
+            return String.format("Error: sortByAttribute usage: sortByAttribute attributeName asc|desc");
+        }
+
+        // Build a hash to support case insensitve attribute name comparison
+        List<String> allAttributes = AttributeManager.getInstance().getAttributeNames();
+        Map<String, String> attributeMap = new HashMap<>();
+        for (String att : allAttributes) {
+            attributeMap.put(att.toUpperCase(), att);
+        }
+
+        boolean[] ascending = new boolean[nattributes];
+        String[] attributes = new String[nattributes];
+        for (int attributeIndex = 0, i = 1; attributeIndex < nattributes; attributeIndex++, i += 2) {
+            String attributeArg = StringUtils.stripQuotes(args.get(i)).toUpperCase();
+            String attributeName = attributeMap.get(attributeArg);
+            if (attributeName == null) {
+                return String.format("Error: Attribute %s not found", attributeName);
+            }
+            String order = args.get(i + 1);
+            ascending[attributeIndex] = order.equalsIgnoreCase("asc");
+            attributes[attributeIndex] = attributeName;
+        }
+        igv.sortAllTracksByAttributes(attributes, ascending);
+        return "OK";
     }
 
     private String removeTrack(String trackName) {
         if (trackName == null) return "Error: NULL TRACK NAME";
         for (Track track : igv.getAllTracks()) {
             if (track.getName().equals(trackName)) {
-                igv.removeTracks(Arrays.asList(track));
+                igv.deleteTracks(Arrays.asList(track));
                 return "OK";
             }
         }
@@ -236,27 +289,35 @@ public class CommandExecutor {
         List<Track> tracks = igv.getAllTracks();
         String[] tokens = dataRangeString.split(",");
         //Min,max or min,baseline,max
-        DataRange range;
-        try {
-            if (tokens.length == 2) {
-                range = new DataRange(Float.parseFloat(tokens[0]), Float.parseFloat(tokens[1]));
-            } else if (tokens.length == 3) {
-                range = new DataRange(Float.parseFloat(tokens[0]), Float.parseFloat(tokens[1]), Float.parseFloat(tokens[2]));
-            } else {
-                throw new IllegalArgumentException(String.format("ERROR: parsing %s for data range. \n" +
-                        "String must be of form <min,max> or <min,baseline,max>", dataRangeString));
+        DataRange range = null;
+        boolean autoscale =
+                (dataRangeString.trim().equalsIgnoreCase("auto") ||
+                        dataRangeString.trim().equalsIgnoreCase("autoscale"));
+
+        if(!autoscale) {
+            try {
+                if (tokens.length == 2) {
+                    range = new DataRange(Float.parseFloat(tokens[0]), Float.parseFloat(tokens[1]));
+                } else if (tokens.length == 3) {
+                    range = new DataRange(Float.parseFloat(tokens[0]), Float.parseFloat(tokens[1]), Float.parseFloat(tokens[2]));
+                } else {
+                    throw new IllegalArgumentException(String.format("ERROR: parsing %s for data range. \n" +
+                            "String must be of form <min,max> or <min,baseline,max>", dataRangeString));
+                }
+            } catch (NumberFormatException e) {
+                return "ERROR: Could not parse input string as a Float. " + e.getMessage();
+            } catch (IllegalArgumentException e) {
+                return e.getMessage();
             }
-        } catch (NumberFormatException e) {
-            return "ERROR: Could not parse input string as a Float. " + e.getMessage();
-        } catch (IllegalArgumentException e) {
-            return e.getMessage();
         }
+
         for (Track track : tracks) {
             if (trackName == null || trackName.equalsIgnoreCase(track.getName())) {
-                track.setDataRange(range);
-                track.setAutoScale(false);
+                if(!autoscale) track.setDataRange(range);
+                track.setAutoScale(autoscale);
             }
         }
+        igv.repaint();
         return "OK";
     }
 
@@ -282,8 +343,7 @@ public class CommandExecutor {
                 affectedTracks.add(track);
             }
         }
-        // this.igv.revalidateTrackPanels();
-        igv.postEvent(new RepaintEvent(affectedTracks));
+        igv.repaint(affectedTracks);
         return "OK";
     }
 
@@ -298,6 +358,68 @@ public class CommandExecutor {
                 }
             }
         }
+        return "OK";
+    }
+
+    private String showAttributes(List<String> args) {
+        // provides whitelist of visible attributes
+        Set<String> hiddenAttributes = new HashSet<>(AttributeManager.getInstance().getAttributeNames());
+        hiddenAttributes.addAll(igv.getSession().getHiddenAttributes());
+        // Build a hash to support case insensitive attribute name comparison
+        Map<String, String> attributeMap = new HashMap<>();
+        for (String att : hiddenAttributes) {
+            attributeMap.put(att.toUpperCase(), att);
+        }
+        for (int i = 1; i < args.size(); i++) {
+            String attributeArg = StringUtils.stripQuotes(args.get(i)).toUpperCase();
+            String attributeName = attributeMap.get(attributeArg);
+            if (!hiddenAttributes.contains(attributeName)) {
+                return String.format("Error: Attribute %s not found", attributeName);
+            }
+            hiddenAttributes.remove(attributeName);
+        }
+        igv.getSession().setHiddenAttributes(hiddenAttributes);
+        igv.getMainPanel().revalidateTrackPanels();
+        return "OK";
+    }
+
+
+    private String setTrackHeight(String trackName, String value) {
+        if (trackName == null) return "Error: NULL TRACK NAME";
+        trackName = parseTrackName(trackName);
+        int height = Integer.parseInt(value);
+        height = Math.max(0, height);
+
+        for (Track track : igv.getAllTracks()) {
+            if (track.getName().equals(trackName)) {
+                track.setHeight(height, true);
+                igv.repaint(track);
+                return "OK";
+            }
+        }
+        return String.format("Error: Track %s not found", trackName);
+    }
+
+    private String setShowDataRange(String show, String trackName) {
+        List<Track> tracks = igv.getAllTracks();
+        boolean showDataRange;
+        try {
+            if (show.equalsIgnoreCase("true") || show.equalsIgnoreCase("false")) {
+                showDataRange = Boolean.valueOf(show);
+            } else {
+                return "ERROR: showDataRange value (" + show + ") is not 'true' or 'false'.";
+            }
+        } catch (IllegalArgumentException e) {
+            return e.getMessage();
+        }
+        List<Track> affectedTracks = new ArrayList<>();
+        for (Track track : tracks) {
+            if (track instanceof DataTrack && (trackName == null || trackName.equalsIgnoreCase(track.getName()))) {
+                ((DataTrack) track).setShowDataRange(showDataRange);
+                affectedTracks.add(track);
+            }
+        }
+        igv.repaint(affectedTracks);
         return "OK";
     }
 
@@ -426,11 +548,15 @@ public class CommandExecutor {
                 format = param.substring(7);
             }
         }
+
+
         // Locus is not specified from port commands
         String locus = null;
         Map<String, String> params = null;
         return loadFiles(fileString, index, coverage, name, format, locus, merge, params);
+
     }
+
 
     String loadFiles(final String fileString,
                      final String indexString,
@@ -470,14 +596,15 @@ public class CommandExecutor {
 
         log.debug("Run load files");
 
+        boolean isDataURL = ParsingUtils.isDataURL(fileString);
 
-        List<String> files = StringUtils.breakQuotedString(fileString, ',');
+        List<String> files = isDataURL ? Arrays.asList(fileString) : StringUtils.breakQuotedString(fileString, ',');
         List<String> names = StringUtils.breakQuotedString(nameString, ',');
         List<String> indexFiles = StringUtils.breakQuotedString(indexString, ',');
         List<String> coverageFiles = StringUtils.breakQuotedString(coverageString, ',');
         List<String> formats = StringUtils.breakQuotedString(formatString, ',');
 
-        if (files.size() == 1) {
+        if (files.size() == 1 && !ParsingUtils.isDataURL(files.get(0))) {
             // String might be URL encoded
             files = StringUtils.breakQuotedString(fileString.replaceAll("%2C", ","), ',');
             names = nameString != null ? StringUtils.breakQuotedString(nameString.replaceAll("%2C", ","), ',') : null;
@@ -521,7 +648,7 @@ public class CommandExecutor {
             if (fileString.endsWith(".xml") || fileString.endsWith(".php") || fileString.endsWith(".php3")) {
                 unload = !merge;
             } else {
-                unload = MessageUtils.confirm("Unload current session before loading new tracks?");
+                unload = true;
             }
             if (unload) {
                 igv.newSession();
@@ -540,16 +667,23 @@ public class CommandExecutor {
 
             String f = files.get(fi);
 
+            if (isDataURL && formats == null) {
+                throw new Error("ERROR: format must be specified for dataURLs");
+            }
+
             // Skip already loaded files TODO -- make this optional?  Check for change?
             if (loadedFiles.contains(f)) continue;
 
             if (f.endsWith(".xml") || f.endsWith(".php") || f.endsWith(".php3") || f.endsWith(".session")) {
                 sessionPaths.add(f);
             } else {
+
                 ResourceLocator rl = new ResourceLocator(f);
 
                 if (names != null) {
                     rl.setName(names.get(fi));
+                } else if(isDataURL) {
+                    rl.setName("Data");
                 }
                 if (indexFiles != null) {
                     rl.setIndexPath(indexFiles.get(fi));
@@ -560,25 +694,21 @@ public class CommandExecutor {
                 if (formats != null) {
                     String format = formats.get(fi);
                     if (!("ga4gh".equals(format)) && !format.startsWith(".")) format = "." + format;
-                    rl.setType(format);
+                    rl.setFormat(format);
                 }
 
-                if ("ga4gh".equals(rl.getType())) {
-                    // TODO -- distinguish reads and variants
-                    rl.setAttribute("provider", Ga4ghAPIHelper.GA4GH_GOOGLE_PROVIDER);
-                } else {
-                    if (params != null) {
-                        String trackLine = createTrackLine(params);
-                        rl.setTrackLine(trackLine);
-                    }
+                if (params != null) {
+                    String trackLine = createTrackLine(params);
+                    rl.setTrackLine(trackLine);
+                }
 
-                    if (rl.isLocal()) {
-                        File file = new File(rl.getPath());
-                        if (!file.exists()) {
-                            return "Error: " + f + " does not exist.";
-                        }
+                if (!isDataURL && rl.isLocal()) {
+                    File file = new File(rl.getPath());
+                    if (!file.exists()) {
+                        throw new Error("Error: " + f + " does not exist.");
                     }
                 }
+
                 fileLocators.add(rl);
             }
         }
@@ -729,7 +859,6 @@ public class CommandExecutor {
         for (int i = 2; i < args.size(); i++) {
             locus += (" " + args.get(i));
         }
-System.out.println("CE goto " + locus);
         igv.goToLocus(locus);
         return "OK";
     }
@@ -759,56 +888,84 @@ System.out.println("CE goto " + locus);
     }
 
 
-    private void sort(String sortArg, String locusString, String param3, String param4) {
+    private String sort(String sortArg, String param2, String param3, String param4) {
 
         RegionScoreType regionSortOption = getRegionSortOption(sortArg);
-        String tag = "";
         if (regionSortOption != null) {
+            // Segmented copy number
             RegionOfInterest roi = null;
-            if (locusString != null) {
-                Locus locus = Locus.fromString(locusString);
+            if (param2 != null) {
+                Locus locus = Locus.fromString(param2);
                 if (locus != null) {
                     int start = Math.max(0, locus.getStart() - 1);
                     roi = new RegionOfInterest(locus.getChr(), start, locus.getEnd(), "");
                 }
             }
-            igv.sortByRegionScore(roi, regionSortOption, FrameManager.getDefaultFrame());
-
+            igv.sortByRegionScore(roi, regionSortOption, FrameManager.getFirstFrame());
+            return "OK";
         } else {
-            Double location = null;
-            if (param3 != null && param3.trim().length() > 0) {
-                try {
-                    location = Double.valueOf(param3.replace(",", ""));
-                    tag = param4;
-                } catch (NumberFormatException e) {
-                    tag = param3;
-                }
-            } else if (locusString != null && locusString.trim().length() > 0) {
-                try {
-                    location = new Double(locusString.replace(",", ""));
-                    tag = param4;
-                } catch (NumberFormatException e) {
-                    tag = param3;
-                }
+            // Alignments
+            String tag = null;
+            String locusString = null;
+            if (sortArg.equalsIgnoreCase("tag")) {
+                tag = param2;
+                locusString = param3;
+            } else {
+                locusString = param2;
             }
 
-            //Convert from 1-based to 0-based
-            if (location != null) location--;
-
+            Double location = null;
+            if (locusString != null && locusString.trim().length() > 0) {
+                // Apparently there have been 2 conventions for "location", a full locus string and a base position
+                // Try locus string first
+                Locus locus = Locus.fromString(locusString);
+                if (locus != null) {
+                    location = (double) locus.getStart();
+                } else {
+                    try {
+                        location = Double.valueOf(locusString.replace(",", ""));
+                        if (location != null) location--;
+                    } catch (NumberFormatException e) {
+                        return "Error parsing location: " + locusString;
+                    }
+                }
+            }
             igv.sortAlignmentTracks(getAlignmentSortOption(sortArg), location, tag);
-
+            return "OK";
         }
     }
 
-    private void group(String groupArg, String tagArg) {
-        igv.groupAlignmentTracks(getAlignmentGroupOption(groupArg), tagArg, null);
+
+    private String group(String groupArg, String tagArg) {
+        final AlignmentTrack.GroupOption groupOption = getAlignmentGroupOption(groupArg);
+        Range r = null;
+        if (groupOption == AlignmentTrack.GroupOption.BASE_AT_POS) {
+            if (tagArg == null) {
+                return "Error: position is required";
+            } else {
+                try {
+                    Locus locus = Locus.fromString(tagArg);
+                    r = new Range(locus.getChr(), locus.getStart(), locus.getEnd());
+                } catch (Exception e) {
+                    return "Error: invalid position: " + tagArg;
+                }
+            }
+        }
+        igv.groupAlignmentTracks(groupOption, tagArg, r);
+        return "OK";
+    }
+
+    private String colorBy(String colorArg, String tagArg) {
+        final AlignmentTrack.ColorOption colorOption = AlignmentTrack.ColorOption.valueOf(colorArg.toUpperCase());
+        igv.colorAlignmentTracks(colorOption, tagArg);
+        return "OK";
     }
 
 
     private String createSnapshot(String filename, String region) {
 
         if (filename == null) {
-            String locus = FrameManager.getDefaultFrame().getFormattedLocusString();
+            String locus = FrameManager.getCurrentLocusString();
             filename = locus.replaceAll(":", "_").replace("-", "_") + ".png";
         } else {
             filename = StringUtils.stripQuotes(filename);
@@ -855,10 +1012,9 @@ System.out.println("CE goto " + locus);
 
     private static void createParents(File outputFile) {
         File parent = outputFile.getParentFile();
-        if (!parent.exists()) {
+        if (parent != null && !parent.exists()) {
             parent.mkdirs();
         }
-
     }
 
     private static RegionScoreType getRegionSortOption(String str) {
@@ -926,9 +1082,8 @@ System.out.println("CE goto " + locus);
                 log.error("Unknown group by option: " + str);
                 return AlignmentTrack.GroupOption.NONE;
             }
-
         }
-
     }
+
 
 }

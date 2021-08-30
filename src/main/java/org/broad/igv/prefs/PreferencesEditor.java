@@ -4,7 +4,9 @@ import org.apache.log4j.Logger;
 import org.broad.igv.DirectoryManager;
 import org.broad.igv.Globals;
 import org.broad.igv.google.OAuthUtils;
+import org.broad.igv.sam.AlignmentTrack;
 import org.broad.igv.ui.IGV;
+import org.broad.igv.ui.color.ColorSwatch;
 import org.broad.igv.ui.color.ColorUtilities;
 import org.broad.igv.ui.color.PaletteColorTable;
 import org.broad.igv.ui.util.FileDialogUtils;
@@ -22,7 +24,8 @@ import java.io.IOException;
 import java.util.List;
 import java.util.*;
 
-import static org.broad.igv.prefs.Constants.*;
+import static org.broad.igv.prefs.Constants.MUTATION_COLOR_TABLE;
+import static org.broad.igv.prefs.Constants.PROVISIONING_URL;
 
 public class PreferencesEditor {
 
@@ -57,8 +60,6 @@ public class PreferencesEditor {
     }
 
     private static void init(final JDialog parent, JPanel panel, List<PreferencesManager.PreferenceGroup> preferenceGroups) {
-
-        // final Map<String, String> updatedPrefs = new HashMap<>();
 
         JTabbedPane tabbedPane = new JTabbedPane();
         tabbedPane.setPreferredSize(new Dimension(850, 590));
@@ -169,11 +170,17 @@ public class PreferencesEditor {
 
                     } else if (pref.getType().startsWith("select")) {
                         JLabel label = new JLabel(pref.getLabel());
+
                         String[] selections = Globals.whitespacePattern.split(pref.getType())[1].split("\\|");
+//                        String[] labels = Arrays.stream(selections)
+//                                .map((s) -> labelMappings.containsKey(s) ? labelMappings.get(s) : s)
+//                                .toArray(String[]::new);
+
+
                         final JComboBox<String> comboBox = new JComboBox<String>(selections);
-                        comboBox.setSelectedItem(pref.getDefaultValue().toString());
+                        comboBox.setSelectedItem(preferences.get(pref.getKey()));
                         comboBox.addActionListener(event -> {
-                            log.debug("Set " + pref.getLabel() + " " + comboBox.getSelectedItem());
+                            updatedPrefs.put(pref.getKey(), comboBox.getSelectedItem().toString());
                         });
                         grid.addLayoutComponent(label, new GridBagConstraints(0, row, 1, 1, 0.0, 0.0, GridBagConstraints.WEST, GridBagConstraints.HORIZONTAL, new Insets(3, 5, 2, 3), 2, 2));
                         grid.addLayoutComponent(comboBox, new GridBagConstraints(1, row, 3, 1, 1.0, 0.0, GridBagConstraints.WEST, GridBagConstraints.NONE, new Insets(3, 2, 2, 5), 2, 2));
@@ -184,9 +191,33 @@ public class PreferencesEditor {
                             label.setToolTipText(pref.getComment());
                             comboBox.setToolTipText(pref.getComment());
                         }
+                    } else if (pref.getType().startsWith("color")) {
+                        String colorString = preferences.get(pref.getKey());
+                        Color c;
+                        if (colorString == null) {
+                            c = Color.WHITE;
+                        } else {
+                            c = ColorUtilities.stringToColor(colorString);
+                        }
+                        JLabel label = new JLabel(pref.getLabel());
+                        ColorSwatch colorSwatch = new ColorSwatch(c);
+                        colorSwatch.addColorChangeListener(c1 -> {
+                            String s = ColorUtilities.colorToString(c1);
+                            updatedPrefs.put(pref.getKey(), s);
+                        });
+                        grid.addLayoutComponent(label, new GridBagConstraints(0, row, 1, 1, 0.0, 0.0, GridBagConstraints.WEST, GridBagConstraints.HORIZONTAL, new Insets(3, 5, 2, 3), 2, 2));
+                        grid.addLayoutComponent(colorSwatch, new GridBagConstraints(1, row, 3, 1, 1.0, 0.0, GridBagConstraints.WEST, GridBagConstraints.NONE, new Insets(3, 2, 2, 5), 2, 2));
+                        group.add(label);
+                        group.add(colorSwatch);
+
                     } else {
                         JLabel label = new JLabel(pref.getLabel());
-                        JTextField field = new JTextField(preferences.get(pref.getKey()));
+
+                        String fieldText = preferences.get(pref.getKey());
+                        if (pref.getKey().equals(Constants.PROXY_PW) && fieldText != null && fieldText.length() > 0) {
+                            fieldText = Utilities.base64Decode(fieldText);
+                        }
+                        JTextField field = new JTextField(fieldText);
                         Dimension d = field.getPreferredSize();
                         d.width = 300;
                         field.setPreferredSize(d);
@@ -194,11 +225,9 @@ public class PreferencesEditor {
                         field.addActionListener(event -> {
                             String text = field.getText();
                             if (validate(text, pref.getType())) {
-                                // TODO -- make base64 an explicit type
                                 if (pref.getKey().equals(Constants.PROXY_PW)) {
                                     text = Utilities.base64Encode(text);
                                 }
-
                                 updatedPrefs.put(pref.getKey(), text);
                             } else {
                                 field.setText(preferences.get(pref.getKey()));

@@ -31,9 +31,11 @@ import htsjdk.samtools.seekablestream.SeekableStreamFactory;
 import org.apache.log4j.Logger;
 import org.broad.igv.DirectoryManager;
 import org.broad.igv.Globals;
+import org.broad.igv.batch.CommandListener;
 import org.broad.igv.google.OAuthUtils;
 import org.broad.igv.prefs.IGVPreferences;
 import org.broad.igv.prefs.PreferencesManager;
+import org.broad.igv.ui.util.UIUtilities;
 import org.broad.igv.util.FileUtils;
 import org.broad.igv.util.HttpUtils;
 import org.broad.igv.util.RuntimeUtils;
@@ -45,11 +47,13 @@ import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
+import java.io.FileWriter;
 import java.io.UnsupportedEncodingException;
 import java.net.URL;
 import java.net.URLDecoder;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashSet;
 
 import static org.broad.igv.prefs.Constants.*;
@@ -99,6 +103,7 @@ public class Main {
         if (igvArgs.igvDirectory != null) {
             setIgvDirectory(igvArgs);
         }
+        checkDotIgvDirectory();
 
         Runnable runnable = () -> {
             if (Globals.IS_WINDOWS && System.getProperty("os.name").contains("10")) {
@@ -106,7 +111,7 @@ public class Main {
             }
 
             DesktopIntegration.verifyJavaPlatform();
-            initApplication();
+            initApplication(igvArgs);
 
             JFrame frame = new JFrame();
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -146,7 +151,50 @@ public class Main {
         }
     }
 
-    private static void initApplication() {
+    private static void checkDotIgvDirectory() {
+        // Check if the .igv directory exists and create it if not.  This is a config
+        // file with a known name and location, not intended to be moved by the user.
+        // At present, this is only used by the launcher scripts and not the Java code.
+        String userHome = System.getProperty("user.home");
+        File dir = new File(userHome, ".igv");
+        if (!dir.exists()) {
+            // doesn't exist -- try to create it
+            try {
+                dir.mkdir();
+            } catch (Exception e) {
+                // Ignore the mkdir failure.  It's not necessary to even report this.
+                // We'll proceed without it.
+                return;
+            }
+        }
+
+        // Also check if the java_arguments file exists and create it if not.  This is
+        // likewise only used by the launcher scripts.  We create it here as a user
+        // convenience.  Note that we skip it if ~/.igv is not a directory.
+        if (dir.isDirectory()) {
+            File argsFile = new File(dir, "java_arguments");
+            if (!argsFile.exists()) {
+                // doesn't exist -- try to create it
+                try {
+                    FileWriter argsFileWriter = new FileWriter(argsFile);
+                    try {
+                        argsFileWriter.append("# See https://raw.githubusercontent.com/igvteam/igv/master/scripts/readme.txt for tips on using this file.");
+                        argsFileWriter.append(System.lineSeparator());
+                        argsFileWriter.append("# Uncomment the following line for an 8 GB memory spec for IGV.");
+                        argsFileWriter.append(System.lineSeparator());
+                        argsFileWriter.append("# -Xmx8G");
+                        argsFileWriter.append(System.lineSeparator());
+                    } finally {
+                        argsFileWriter.close();
+                    }
+                } catch (Exception e) {
+                    // As above, ignore the write failure.
+                }
+            }
+        }
+    }
+
+    private static void initApplication(Main.IGVArgs igvArgs) {
 
         long mem = RuntimeUtils.getAvailableMemory();
         int MB = 1000000;
@@ -179,8 +227,6 @@ public class Main {
         System.setProperty("swing.aatext", "true");
 
         checkVersion();
-
-
     }
 
     public static void updateTooltipSettings() {
@@ -202,26 +248,34 @@ public class Main {
                     final String serverVersionString = HttpUtils.getInstance().getContentsAsString(new URL(Globals.getVersionURL())).trim();
                     // See if user has specified to skip this update
 
-                    final String skipString = PreferencesManager.getPreferences().get(SKIP_VERSION);
-                    if (skipString != null) {
-                        HashSet<String> skipVersion = new HashSet<>(Arrays.asList(skipString.split(",")));
-                        if (skipVersion.contains(serverVersionString)) return;
-                    }
-
                     Version serverVersion = Version.getVersion(serverVersionString.trim());
                     if (serverVersion == null) return;
 
                     if (thisVersion.lessThan(serverVersion)) {
-                        log.info("A later version of IGV is available (" + serverVersionString + ")");
-                    }
-                } else if (Globals.VERSION.contains("3.0_beta") || Globals.VERSION.contains("snapshot")) {
-                    HttpUtils.getInstance().getContentsAsString(new URL(Globals.getVersionURL())).trim();
-                } else {
-                    log.info("Unknown version: " + Globals.VERSION);
-                }
 
+                        log.info("A later version of IGV is available (" + serverVersionString + ")");
+                        final String skipString = PreferencesManager.getPreferences().get(SKIP_VERSION);
+                        boolean skip = false;
+                        if (skipString != null) {
+                            HashSet<String> skipVersion = new HashSet<>(Arrays.asList(skipString.split(",")));
+                            skip = (skipVersion.contains(serverVersionString));
+                        }
+
+                        if (!(skip || Globals.isBatch() || Globals.isHeadless() || Globals.isSuppressMessages())) {
+                            // Inform user, do this only once
+                            final VersionUpdateDialog dlg = new VersionUpdateDialog(serverVersionString);
+                            UIUtilities.invokeOnEventThread(() -> {
+                                dlg.setVisible(true);
+                                if (dlg.isSkipVersion()) {
+                                    String newSkipString = skipString + "," + serverVersionString;
+                                    PreferencesManager.getPreferences().put(SKIP_VERSION, newSkipString);
+                                }
+                            });
+                        }
+                    }
+                }
             } catch (Exception e) {
-                // ignore
+                log.error("Error checking IGV version ");
             } finally {
 
             }
@@ -250,6 +304,7 @@ public class Main {
      * @param igvArgs command-line arguments
      */
     public static void open(Frame frame, Main.IGVArgs igvArgs) {
+        final IGVPreferences preferences = PreferencesManager.getPreferences();
 
         // Add a listener for the "close" icon, unless its a JFrame
         if (!(frame instanceof JFrame)) {
@@ -292,9 +347,8 @@ public class Main {
 
         SeekableStreamFactory.setInstance(IGVSeekableStreamFactory.getInstance());
 
-        RuntimeUtils.loadPluginJars();
-
-        IGV.createInstance(frame).startUp(igvArgs);
+        // Start IGV's UI itself (frame) and other components
+        IGV.createInstance(frame, igvArgs).startUp(igvArgs);
 
         // TODO Should this be done here?  Will this step on other key dispatchers?
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(new GlobalKeyDispatcher());
@@ -363,7 +417,7 @@ public class Main {
                     return new Version(major, minor, build);
 
                 } catch (NumberFormatException e) {
-                    log.error("Error parsing version string: " + versionString);
+                    log.error("Error parsing version string");
                     return null;
                 }
             }
@@ -413,7 +467,7 @@ public class Main {
         private String coverageFile = null;
         private String name = null;
         public String igvDirectory = null;
-        public String forceVersion = null;
+        public Collection<String> httpHeader = null;
 
         IGVArgs(String[] args) {
             if (args != null) {
@@ -438,9 +492,10 @@ public class Main {
             CmdLineParser.Option nameOption = parser.addStringOption('n', "name");
             CmdLineParser.Option locusOption = parser.addStringOption('l', "locus");
             CmdLineParser.Option igvDirectoryOption = parser.addStringOption("igvDirectory");
-            CmdLineParser.Option forceVersionOption = parser.addStringOption("forceVersion");
             CmdLineParser.Option versionOption = parser.addBooleanOption("version");
             CmdLineParser.Option helpOption = parser.addBooleanOption("help");
+            CmdLineParser.Option headerOption = parser.addStringOption('H', "header");
+
 
             try {
                 parser.parse(args);
@@ -458,6 +513,7 @@ public class Main {
             genomeServerURL = getDecodedValue(parser, genomeServerOption);
             name = (String) parser.getOptionValue(nameOption);
             locusString = (String) parser.getOptionValue(locusOption);
+            httpHeader = parser.getOptionValues(headerOption);
 
             String indexFilePath = (String) parser.getOptionValue(indexFileOption);
             if (indexFilePath != null) {
@@ -475,11 +531,6 @@ public class Main {
                 igvDirectory = maybeDecodePath(igvDirectoryPath);
             }
 
-            String forceVersion = (String) parser.getOptionValue(forceVersionOption);
-            if (forceVersion != null) {
-                Globals.VERSION = forceVersion;
-            }
-
             String[] nonOptionArgs = parser.getRemainingArgs();
 
             if (parser.getOptionValue(versionOption) != null) {
@@ -487,7 +538,7 @@ public class Main {
                 System.exit(0);
             }
 
-            if(parser.getOptionValue(helpOption) != null) {
+            if (parser.getOptionValue(helpOption) != null) {
                 printHelp();
                 System.exit(0);
             }
@@ -559,7 +610,7 @@ public class Main {
 
         private String maybeDecodePath(String path) {
 
-            if (FileUtils.resourceExists(path)) {
+            if ((new File(path)).exists()) {
                 return path;
             } else if (FileUtils.isRemote(path)) {
                 return URLDecoder.decode(path);
@@ -632,6 +683,10 @@ public class Main {
             return name;
         }
 
+        public Collection<String> getHttpHeader() {
+            return httpHeader;
+        }
+
         private void printHelp() {
             System.out.println("Command line options:");
             System.out.println("Space delimited list of data files to load");
@@ -645,6 +700,7 @@ public class Main {
             System.out.println("--coverageFile, -c  Coverage file or comma delimited list of coverage files corresponding to data files");
             System.out.println("--name, -n  Name or comma-delimited list of names for tracks corresponding to data files");
             System.out.println("--locus, -l  Initial locus");
+            System.out.println("--header, -H http header to include with all requests for list of data files");
             System.out.println("--igvDirectory Path to the local igv directory.  Defaults to <user home>/igv");
             System.out.println("--version  Print the IGV version and exit");
             System.out.println("--help Print this output and exit");

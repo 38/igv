@@ -83,40 +83,45 @@ public class IGVDatasetParser {
     }
 
     private void setColumnDefaults() {
-        String tmp = (dataResourceLocator.getPath().endsWith(".txt")
-                ? dataResourceLocator.getPath().substring(0,
-                dataResourceLocator.getPath().length() - 4) : dataResourceLocator.getPath()).toLowerCase();
 
-        if (tmp.endsWith(".igv")) {
-            chrColumn = 0;
-            startColumn = 1;
-            endColumn = 2;
-            probeColumn = 3;
-            firstDataColumn = 4;
-            hasEndLocations = true;
-            hasCalls = false;
-        } else if (tmp.endsWith(".xcn") || tmp.endsWith("cn") || tmp.endsWith(".snp") || tmp.endsWith(".loh")) {
-            probeColumn = 0;
-            chrColumn = 1;
-            startColumn = 2;
-            endColumn = -1;
-            firstDataColumn = 3;
-            hasEndLocations = false;
-            hasCalls = tmp.endsWith(".xcn") || tmp.endsWith(".snp");
-        } else if (tmp.endsWith(".expr")) {
-            //gene_id	bundle_id	chr	left	right	FPKM	FPKM_conf_lo	FPKM_conf_hi
-            probeColumn = 0;
-            chrColumn = 2;
-            startColumn = 3;
-            endColumn = 4;
-            startBase = 1;
-            firstDataColumn = 5;
-            lastDataColumn = 5;
-            hasEndLocations = true;
+        String format = dataResourceLocator.getFormat();
+        switch (format) {
+            case "igv":
+                chrColumn = 0;
+                startColumn = 1;
+                endColumn = 2;
+                probeColumn = 3;
+                firstDataColumn = 4;
+                hasEndLocations = true;
+                hasCalls = false;
+                break;
+            case "cn":
+            case "snp":
+            case "xcn":
+            case "loh":
+                probeColumn = 0;
+                chrColumn = 1;
+                startColumn = 2;
+                endColumn = -1;
+                firstDataColumn = 3;
+                hasEndLocations = false;
+                hasCalls = format.equals("xcn") || format.equals("snp");
+                break;
+            case ".expr":
+                //gene_id	bundle_id	chr	left	right	FPKM	FPKM_conf_lo	FPKM_conf_hi
+                probeColumn = 0;
+                chrColumn = 2;
+                startColumn = 3;
+                endColumn = 4;
+                startBase = 1;
+                firstDataColumn = 5;
+                lastDataColumn = 5;
+                hasEndLocations = true;
+                break;
+            default:
+                // TODO -- popup dialog and ask user to define columns,  and csv vs tsv?
+                throw new ParserException("Unknown file type: ", 0);
 
-        } else {
-            // TODO -- popup dialog and ask user to define columns,  and csv vs tsv?
-            throw new ParserException("Unknown file type: ", 0);
         }
     }
 
@@ -360,13 +365,14 @@ public class IGVDatasetParser {
     public ChromosomeData loadChromosomeData(ChromosomeSummary chrSummary, String[] dataHeaders) {
 
         // InputStream is = null;
+        SeekableStream is = null;
         try {
             int skipColumns = hasCalls ? 2 : 1;
 
             // Get an estimate of the number of snps (rows).  THIS IS ONLY AN ESTIMATE
             int nRowsEst = chrSummary.getNDataPts();
 
-            SeekableStream is = IGVSeekableStreamFactory.getInstance().getStreamFor(dataResourceLocator.getPath());
+            is = IGVSeekableStreamFactory.getInstance().getStreamFor(dataResourceLocator.getPath());
             is.seek(chrSummary.getStartPosition());
             AsciiLineReader reader = new AsciiLineReader(is);
 
@@ -385,7 +391,7 @@ public class IGVDatasetParser {
             String chromosome = chrSummary.getName();
             boolean chromosomeStarted = false;
             String nextLine = reader.readLine();
-
+            int skippedLineCount = 0;
             while ((nextLine != null) && (nextLine.trim().length() > 0)) {
 
                 if (!nextLine.startsWith("#")) {
@@ -409,7 +415,7 @@ public class IGVDatasetParser {
 
                             startLocations.add(start);
 
-                            if(tokens.length <= firstDataColumn + (dataHeaders.length - 1)*skipColumns){
+                            if (tokens.length <= firstDataColumn + (dataHeaders.length - 1) * skipColumns) {
                                 String msg = "Line has too few data columns: " + nextLine;
                                 log.error(msg);
                                 throw new RuntimeException(msg);
@@ -428,9 +434,12 @@ public class IGVDatasetParser {
                         }
 
                     } catch (NumberFormatException numberFormatException) {
-
-                        // Skip line
-                        log.info("Skipping line (NumberFormatException) " + nextLine);
+                        if (skippedLineCount < 5) {
+                            skippedLineCount++;
+                            if (skippedLineCount == 5) {
+                                log.info("Skipping line: " + nextLine + (skippedLineCount < 5 ? "" : " Further skipped lines will not be logged"));
+                            }
+                        }
                     }
                 }
 
@@ -452,8 +461,14 @@ public class IGVDatasetParser {
             return cd;
 
         } catch (IOException ex) {
-            log.error("Error parsing cn file", ex);
-            throw new RuntimeException("Error parsing cn file", ex);
+            log.error("Error parsing igv file " + this.dataResourceLocator.getPath(), ex);
+            throw new RuntimeException("Error parsing igv file", ex);
+        } finally {
+            try {
+                is.close();
+            } catch (IOException e) {
+                log.error("Error closing igv file " + this.dataResourceLocator.getPath(), e);
+            }
         }
 
     }

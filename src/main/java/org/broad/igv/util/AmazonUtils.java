@@ -1,8 +1,6 @@
 package org.broad.igv.util;
 
 import com.google.gson.JsonObject;
-import htsjdk.samtools.util.Tuple;
-import org.apache.commons.lang3.tuple.Triple;
 import org.apache.log4j.Logger;
 import org.broad.igv.Globals;
 import org.broad.igv.aws.IGVS3Object;
@@ -31,7 +29,6 @@ import software.amazon.awssdk.services.sts.model.Credentials;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
-import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
 import java.text.ParseException;
@@ -48,7 +45,18 @@ public class AmazonUtils {
     private static List<String> bucketsFinalList = new ArrayList<>();
     private static CognitoIdentityClient cognitoIdentityClient;
     private static Region AWSREGION;
-    private static Map<String, String> locatorTos3PresignedMap = new HashMap<>();
+
+
+    /**
+     * Maps s3:// URLs to presigned URLs
+     */
+    private static Map<String, String> s3ToPresignedMap = new HashMap<>();
+
+    /**
+     * Maps aws presigned URLs to s3://.  This is needed in some cases (e.g. Tribble) to regenerate an expired URL
+     */
+    private static Map<String, String> presignedToS3Map = new HashMap<>();
+
     private static JsonObject CognitoConfig;
 
     public static void setCognitoConfig(JsonObject json) {
@@ -97,6 +105,13 @@ public class AmazonUtils {
 
         JsonObject igv_oauth_conf = GetCognitoConfig();
         JsonObject response = provider.getResponse();
+
+        // Handle non-user initiated S3 auth (IGV early startup), i.e user-specified GenomesLoader
+        if (response == null) {
+            // Go back to auth flow, not auth'd yet
+            checkLogin();
+            response = provider.getResponse();
+        }
 
         JsonObject payload = JWTParser.getPayload(response.get("id_token").getAsString());
 
@@ -219,7 +234,7 @@ public class AmazonUtils {
         private boolean objAvailable;
         private String errorReason;
 
-        public boolean getObjAvailable() {
+        public boolean isObjectAvailable() {
             return objAvailable;
         }
 
@@ -240,14 +255,27 @@ public class AmazonUtils {
     // On AWS this means present in STANDARD, STANDARD_IA, INTELLIGENT_TIERING object access tiers.
     // Tiers GLACIER and DEEP_ARCHIVE are not immediately retrievable without action.
     public static s3ObjectAccessResult isObjectAccessible(String bucket, String key) {
+        // TODO:
+        //  1. Determine if it's a public S3 resource first of all? If so, none of the logic below is needed
         s3ObjectAccessResult res = new s3ObjectAccessResult();
-        HeadObjectResponse s3Meta;
 
-        String s3ObjectStorageStatus = null;
-        String s3ObjectStorageClass;
+        // Safeguard for null corner case(s), assume we can access the object
+        res.setObjAvailable(true);
+        //res.setErrorReason("Object not found, perhaps a new tier was introduced on AWS?"); // not really an error
 
+        HeadObjectResponse s3Meta;      // Head metadata from the S3 object
+        String s3ObjectStorageStatus;   // Can it be retrieved immediately or not?
+        String s3ObjectStorageClass;    // Which AWS S3 tier is this object in?
+
+        // Simple "null" case. The object is directly accessible in
+        // STANDARD, INFREQUENT_ACCESS, INTELLIGENT_TIERING
+        // or any other "immediately available" tier.
         s3Meta = AmazonUtils.getObjectMetadata(bucket, key);
-        s3ObjectStorageClass = s3Meta.storageClass().toString();
+        if (s3Meta.storageClass() == null) {
+            res.setErrorReason("Object is in an accessible tier, no errors are expected");
+            res.setObjAvailable(true);
+            return res; // nothing else to check, return early
+        }
 
         // Determine in which state this object really is:
         // 1. Archived.
@@ -260,6 +288,8 @@ public class AmazonUtils {
         //
         // Possible error reason messages for the users are:
 
+        s3ObjectStorageClass = s3Meta.storageClass().toString();
+
         String archived = "Amazon S3 object is in " + s3ObjectStorageClass + " storage tier, not accessible at this moment. " +
                 "Please contact your local system administrator about object: s3://" + bucket + "/" + key;
         String restoreInProgress = "Amazon S3 object is in " + s3ObjectStorageClass + " and being restored right now, please be patient, this can take up to 48h. " +
@@ -269,30 +299,24 @@ public class AmazonUtils {
             s3ObjectStorageClass.contains("GLACIER")) {
             try {
                 s3ObjectStorageStatus = s3Meta.sdkHttpResponse().headers().get("x-amz-restore").toString();
-                //S3ObjectStorageStatus = S3Meta.restore();
-            } catch(NullPointerException npe) {
+            } catch (NullPointerException npe) {
                 res.setObjAvailable(false);
                 res.setErrorReason(archived);
                 return res;
             }
 
-            if(s3ObjectStorageStatus.contains("ongoing-request=\"true\"")) {
+            if (s3ObjectStorageStatus.contains("ongoing-request=\"true\"")) {
                 res.setObjAvailable(false);
                 res.setErrorReason(restoreInProgress);
 
-            // "If an archive copy is already restored, the header value indicates when Amazon S3 is scheduled to delete the object copy"
-            } else if(s3ObjectStorageStatus.contains("ongoing-request=\"false\"") && s3ObjectStorageStatus.contains("expiry-date=")) {
+                // "If an archive copy is already restored, the header value indicates when Amazon S3 is scheduled to delete the object copy"
+            } else if (s3ObjectStorageStatus.contains("ongoing-request=\"false\"") && s3ObjectStorageStatus.contains("expiry-date=")) {
                 res.setObjAvailable(true);
             } else {
-            // The object has never been restored?
+                // The object has never been restored?
                 res.setObjAvailable(false);
                 res.setErrorReason(archived);
             }
-        } else {
-            // The object must be either in STANDARD, INFREQUENT_ACCESS, INTELLIGENT_TIERING or
-            // any other "immediately available" tier...
-            res.setErrorReason("Object is in an accessible tier, no errors are expected");
-            res.setObjAvailable(true);
         }
 
         return res;
@@ -398,7 +422,11 @@ public class AmazonUtils {
     // Amazon S3 Presign URLs
     // Also keeps an internal mapping between ResourceLocator and active/valid signed URLs.
     private static String createPresignedURL(String s3Path) throws IOException {
+        // TODO: Ideally the presigned URL should be generated without any of the Cognito being involved first?
         // Make sure access token are valid (refreshes token internally)
+
+        System.out.println("Creating signed URL: " + s3Path);
+
         OAuthProvider provider = OAuthUtils.getInstance().getProvider("Amazon");
         provider.getAccessToken();
 
@@ -409,7 +437,7 @@ public class AmazonUtils {
         StaticCredentialsProvider awsCredsProvider = StaticCredentialsProvider.create(creds);
 
         S3Presigner s3Presigner = S3Presigner.builder()
-                .expiration(provider.getExpirationTime())
+                .expiration(provider.getExpirationTime())       // Duration.ofSeconds(30)  // <= for testing
                 .awsCredentials(awsCredsProvider)
                 .region(getAWSREGION())
                 .build();
@@ -429,13 +457,12 @@ public class AmazonUtils {
      */
 
     public static String translateAmazonCloudURL(String s3UrlString) throws IOException {
-        String presignedUrl = locatorTos3PresignedMap.get(s3UrlString);
-
+        String presignedUrl = s3ToPresignedMap.get(s3UrlString);
         if (presignedUrl == null || !isPresignedURLValid(new URL(presignedUrl))) {
             presignedUrl = createPresignedURL(s3UrlString);
-            locatorTos3PresignedMap.put(s3UrlString, presignedUrl);
+            s3ToPresignedMap.put(s3UrlString, presignedUrl);
+            presignedToS3Map.put(presignedUrl, s3UrlString);
         }
-
         return presignedUrl;
     }
 
@@ -444,16 +471,23 @@ public class AmazonUtils {
         return (path.startsWith("s3://"));
     }
 
+    public static boolean isPresignedURL(String urlString) {
+        return presignedToS3Map.containsKey(urlString);
+    }
+
+    public static String updatePresignedURL(String urlString) throws IOException {
+        String s3UrlString = presignedToS3Map.get(urlString);
+        if(s3UrlString == null) {
+            throw new RuntimeException("Unrecognized presigned url: " + urlString);
+        } else {
+            return translateAmazonCloudURL(s3UrlString);
+        }
+    }
+
     public static void checkLogin() {
         if (!OAuthUtils.getInstance().getProvider("Amazon").isLoggedIn()) {
             OAuthUtils.getInstance().getProvider("Amazon").doSecureLogin();
         }
-    }
-
-    public static boolean isS3PresignedValid(String url) throws MalformedURLException {
-        String s3Mapping = locatorTos3PresignedMap.get(url);
-
-        return s3Mapping != null && isPresignedURLValid(new URL(s3Mapping));
     }
 
     /**
@@ -473,6 +507,9 @@ public class AmazonUtils {
         try {
             long presignedTime = signedURLValidity(url);
             isValidSignedUrl = presignedTime - System.currentTimeMillis() - Globals.TOKEN_EXPIRE_GRACE_TIME > 0; // Duration in milliseconds
+            if(!isValidSignedUrl) {
+                System.out.println("URL expired: " + url.toExternalForm());
+            }
         } catch (ParseException e) {
             log.error("The AWS signed URL date parameter X-Amz-Date has incorrect formatting");
             isValidSignedUrl = false;

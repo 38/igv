@@ -95,7 +95,6 @@ public class S3LoadDialog extends JDialog {
 
         LongRunningTask.submit(() -> {
             TreePath[] paths = selectionTree.getSelectionPaths();
-            // Reminder: ArrayList<Triple<Bucket, Key, StorageClass>>
             ArrayList<Triple<String, String, String>> preLocatorPaths = new ArrayList<>();
             ArrayList<ResourceLocator> finalLocators = new ArrayList<>();
 
@@ -104,14 +103,13 @@ public class S3LoadDialog extends JDialog {
                     Triple<String, String, String> bucketKeyTier = getBucketKeyTierFromTreePath(path);
 
                     AmazonUtils.s3ObjectAccessResult res = isObjectAccessible(bucketKeyTier.getLeft(), bucketKeyTier.getMiddle());
-                    if(!res.getObjAvailable()) { MessageUtils.showErrorMessage(res.getErrorReason(), null); return; }
+                    if(!res.isObjectAvailable()) { MessageUtils.showErrorMessage(res.getErrorReason(), null); return; }
 
                     preLocatorPaths.add(bucketKeyTier);
                 }
             }
 
             for (Triple<String, String, String> preLocator: preLocatorPaths) {
-
                 ResourceLocator locator = getResourceLocatorFromBucketKey(preLocator);
                 finalLocators.add(locator);
             }
@@ -242,7 +240,7 @@ public class S3LoadDialog extends JDialog {
                             Triple<String, String, String> bucketKeyTier = getBucketKeyTierFromTreePath(selPath);
 
                             AmazonUtils.s3ObjectAccessResult res = isObjectAccessible(bucketKeyTier.getLeft(), bucketKeyTier.getMiddle());
-                            if(!res.getObjAvailable()) { MessageUtils.showErrorMessage(res.getErrorReason(), null); return;}
+                            if(!res.isObjectAvailable()) { MessageUtils.showErrorMessage(res.getErrorReason(), null); return;}
 
                             ResourceLocator loc = getResourceLocatorFromBucketKey(bucketKeyTier);
                             IGV.getInstance().loadTracks(Collections.singletonList(loc));

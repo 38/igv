@@ -19,6 +19,9 @@ IGV.track.height	Default feature track height (pixels)	integer	15
 TRACK_ATTRIBUTE_NAME_KEY	Sample attribute key for track names	string	null
 EXPAND_FEATURE_TRACKS	Expand feature tracks	boolean	FALSE
 NORMALIZE_COVERAGE	Normalize coverage data (.tdf files only)	boolean	FALSE
+##Heatmaps
+NO_DATA.COLOR	 No data	color	216,216,216
+NO_CALL.COLOR	 No call	color	150,150,150
 
 #Variants
 
@@ -32,8 +35,7 @@ AF_VAR.COLOR	Allel freq - variant	color	255,0,0
 VARIANT_COLOR_BY_ALLELE_FREQ	Color by allele frequency (uncheck to color by allele fraction)	boolean	TRUE
 
 #Mutations
-
-OVERLAY_ATTRIBUTE_KEY	LINKING_ID
+info	Settings on this tab apply to TCGA  "maf" and "mut" files.
 ##Color Options
 COVER_OVERLAY_KEY	Color Mutations	boolean	TRUE
 MUTATION_INDEL_COLOR_KEY	Indel	color	0,200,0
@@ -45,9 +47,8 @@ MUTATION_TARGETED_REGION_COLOR_KEY	Targeted Region	color	236,155,43
 MUTATION_Truncating_COLOR	Truncating	color	150,0,0
 MUTATION_Non-coding_Transcript_COLOR	Non-coding Transcript	color	0,0,150
 MUTATION_Other_AA_changing_COLOR	Other AA Changing	color	0,150,150
-MUTATION_Other_likely_neutral_COLOR	Other Likely Neutralcolor	225,180,225
+MUTATION_Other_likely_neutral_COLOR	Other Likely Neutral	color	225,180,225
 MUTATION_UNKNOWN_COLOR_KEY	Unknown	color	0,180,225
-
 
 #Charts
 CHART.DRAW_TOP_BORDER	Draw top border	boolean	FALSE
@@ -61,6 +62,7 @@ CN_FREQ.AMP_THRESHOLD	CN freq amplification threshold	float	0.1
 CN_FREQ.DEL_THRESHOLD	CN freq deletion threshold	float	-0.1
 
 #Alignments
+info	Settings for alignment tracks.  See the RNA or Third Gen tabs to override for specific types.
 
 ##Track Display
 SAM.SHOW_ALIGNMENT_TRACK	Show alignment track	boolean	TRUE
@@ -74,6 +76,10 @@ SAM.MAX_LEVELS	Number of reads per window	integer	100
 
 ##Alignment Track Options
 
+SAM.COLOR_BY	Color alignments by	select NONE|READ_STRAND|FIRST_OF_PAIR_STRAND|PAIR_ORIENTATION|UNEXPECTED_PAIR|INSERT_SIZE|SAMPLE|READ_GROUP|LIBRARY|MOVIE|ZMW|BISULFITE|NOMESEQ|TAG|MAPPED_SIZE|LINK_STRAND|YC_TAG	UNEXPECTED_PAIR
+SAM.COLOR_BY_TAG	Color by TAG	string
+SAM.GROUP_OPTION	Group alignments by	select NONE|STRAND|SAMPLE|READ_GROUP|LIBRARY|FIRST_OF_PAIR_STRAND|TAG|PAIR_ORIENTATION|MATE_CHROMOSOME|SV_ALIGNMENT|SUPPLEMENTARY|BASE_AT_POS|MOVIE|ZMW|HAPLOTYPE|READ_ORDER|LINKED|PHASE
+SAM.GROUP_BY_TAG	Group by TAG	string
 SAM.MAX_VISIBLE_RANGE	Visibility range threshold (kb)	float	30	Range at which alignments become visibile
 SAM.QUALITY_THRESHOLD	Mapping quality threshold	int	0
 SAM.ALIGNMENT_SCORE_THRESHOLD	Alignment score threshold	int	0
@@ -113,13 +119,18 @@ SAM.MAX_SOFT_CLIP	Soft clip reference extension (reference sequence is extended 
 ---
 SAM.FILTER_ALIGNMENTS	Filter alignments by read group	boolean	FALSE
 SAM.FILTER_URL	URL or path to read group filter file	string	null
+
 ##Coverage Track Options
-SAM.ALLELE_THRESHOLD	Coverage allele-fraction threshold	float	0.2f
+SAM.ALLELE_THRESHOLD	Coverage allele-fraction threshold	float	0.2
 SAM.ALLELE_USE_QUALITY	Quality weight allele fraction	boolean	TRUE
+SAM.BASEMOD_THRESHOLD	Base modification probability threshold (0-1)	float	0.2
+
+
 ##Splice Junction Track
 SAM.SHOW_JUNCTION_FLANKINGREGIONS	Show flanking regions	boolean	FALSE
 SAM.JUNCTION_MIN_FLANKING_WIDTH	Minimum flanking width	integer	0
 SAM.JUNCTION_MIN_COVERAGE	Minimum junction coverage	integer	1
+
 ##Insert Size Options
 SAM.COMPUTE_ISIZES	Compute insert size thresholds	boolean	TRUE
 SAM.MIN_ISIZE_MIN_PERCENTILE	Minimum (percentile)	float	0.5
@@ -181,12 +192,13 @@ PROXY.PW	Password	string	null
 PORT_ENABLED	Enable port	boolean	TRUE
 PORT_NUMBER	Port number	integer	60151
 ---
-IGV.genome.sequence.dir	Genome server URL	string	https://s3.amazonaws.com/igv.org.genomes/genomes.txt
+IGV.genome.sequence.dir	Genome server URL	string	https://s3.amazonaws.com/igv.org.genomes/genomes.tsv
 MASTER_RESOURCE_FILE_KEY	Data registry url	string	https://data.broadinstitute.org/igvdata/$$_dataServerRegistry.txt
 ---
 PROVISIONING.URL	OAuth provisioning URL	string	null
 ---
-BLAT_URL	Blat url	String	http://genome.cse.ucsc.edu/cgi-bin/hgBlat
+
+BLAT_URL	Blat url	String	https://genome.ucsc.edu/cgi-bin/hgBlat?userSeq=$SEQUENCE&type=DNA&db=$DB&output=json
 ---
 TOOLTIP.INITIAL_DELAY	Tooltip inital delay (ms)	integer	50
 TOOLTIP.RESHOW_DELAY	Tooltip reshow delay (ms)	integer	50
@@ -196,7 +208,6 @@ TOOLTIP.DISMISS_DELAY	Tooltip dismiss delay (ms)	integer	60000
 #Hidden
 SCORE_VARIANTS	FALSE
 
-SAM.COLOR_BY	UNEXPECTED_PAIR
 SAM.AUTOSORT	FALSE
 SAM.SHADE_CENTER	TRUE
 SAM.SHOW_REF_SEQ	FALSE
@@ -242,6 +253,7 @@ DEFAULT_GENOME_KEY	hg19
 IGV.track.height	15
 FLANKING_REGION	2000
 SHOW_SEQUENCE_TRANSLATION	FALSE
+SEQUENCE_TRANSLATION_STRAND	POSITIVE
 AUTO_UPDATE_GENOMES	TRUE
 GWAS_TRACK_HEIGHT	200
 GWAS_DESCRIPTION_CACHE_SIZE	10000
@@ -268,7 +280,7 @@ CBIO_AMPLIFICATION_THRESHOLD	0.9
 CBIO_DELETION_THRESHOLD	0.9
 CBIO_EXPRESSION_UP_THRESHOLD	1
 CBIO_EXPRESSION_DOWN_THRESHOLD	1
-DETAILS_BEHAVIOR	HOVER
+DETAILS_BEHAVIOR	CLICK
 SHOW_SIZE_WARNING	TRUE
 SKIP_VERSION
 COLOR.A	0,150,0
@@ -278,7 +290,6 @@ COLOR.G	209,113,5
 COLOR.N	128,128,128
 
 SASHIMI.SHOW_COVERAGE	TRUE
-SAM.SHOW_DUPLICATES	FALSE
 GENE_LIST_BED_FORMAT	FALSE
 showLOS	TRUE
 DEBUG.PROXY	FALSE
@@ -294,3 +305,7 @@ MUTATION_Non-coding_Transcript_COLOR	Non-coding Transcript	color	0,0,150
 MUTATION_Other_AA_changing_COLOR	Other AA Changing	color	0,150,150
 MUTATION_Other_likely_neutral_COLO	Other Likely NeutralR	color	225,180,225
 MUTATION_UNKNOWN_COLOR_KEY	Unknown	color	0,180,225
+
+OVERLAY_ATTRIBUTE_KEY	Linking ID	string	LINKING_ID
+
+

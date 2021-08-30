@@ -55,7 +55,7 @@ public class FileUtils {
         if (isRemote(path)) {
             return HttpUtils.getInstance().resourceAvailable(path);
         } else {
-            if(path.startsWith("file://")) {
+            if (path.startsWith("file://")) {
                 path = path.substring(7);
             }
             return (new File(path)).exists();
@@ -70,7 +70,7 @@ public class FileUtils {
         }
         return path.startsWith("http://") || path.startsWith("https://") ||
                 path.startsWith("ftp://") || path.startsWith("gs://") ||
-                path.startsWith("s3://");
+                path.startsWith("s3://") || path.startsWith("htsget://");
     }
 
 
@@ -222,30 +222,22 @@ public class FileUtils {
      * Test to see if the first non-comment line (first line not starting with #) is tab-delimited with the
      * given number of minimum columns.  Limit the test to the first 1,000 lines.
      */
-    public static boolean isTabDelimited(ResourceLocator loc, int minColumnCount) throws IOException {
+    public static boolean isTabDelimited(BufferedReader reader, int minColumnCount) throws IOException {
 
-        BufferedReader reader = null;
-
-        try {
-            reader = ParsingUtils.openBufferedReader(loc.getPath());
-            int nLinesTested = 0;
-            String nextLine;
-            while ((nextLine = reader.readLine()) != null && nLinesTested < 1000) {
-                if (nextLine.startsWith("#")) {
-                    continue;
-                }
-                nLinesTested++;
-                String[] tokens = nextLine.split("\t");
-                if (tokens.length >= minColumnCount) {
-                    return true;
-                }
+        int nLinesTested = 0;
+        String nextLine;
+        while ((nextLine = reader.readLine()) != null && nLinesTested < 1000) {
+            if (nextLine.startsWith("#")) {
+                continue;
             }
-            return false;
-        } finally {
-            if (reader != null) {
-                reader.close();
+            nLinesTested++;
+            String[] tokens = nextLine.split("\t");
+            if (tokens.length >= minColumnCount) {
+                return true;
             }
         }
+        return false;
+
     }
 
     /**
@@ -258,7 +250,7 @@ public class FileUtils {
      */
     public static String getFirstLine(String path, String commentChar) throws IOException {
 
-        if(path == null) return null;
+        if (path == null) return null;
 
         BufferedReader reader = null;
         try {
@@ -394,7 +386,7 @@ public class FileUtils {
      * @return
      */
     public static String getAbsolutePath(String inputPath, String referencePath) {
-        if (isRemote(inputPath)) {
+        if (isRemote(inputPath) || referencePath == null) {
             return inputPath;
         }
         File inFile = new File(inputPath);
@@ -501,15 +493,20 @@ public class FileUtils {
      */
     public static String getContents(String path) throws IOException {
 
-        BufferedReader reader = ParsingUtils.openBufferedReader(path);
+        BufferedReader reader = null;
 
-        StringBuilder contents = new StringBuilder();
-        PrintWriter pw = new PrintWriter(new StringBuilderWriter(contents));
-        String nextLine;
-        while ((nextLine = reader.readLine()) != null) {
-            pw.println(nextLine);
+        try {
+            reader = ParsingUtils.openBufferedReader(path);
+            StringBuilder contents = new StringBuilder();
+            PrintWriter pw = new PrintWriter(new StringBuilderWriter(contents));
+            String nextLine;
+            while ((nextLine = reader.readLine()) != null) {
+                pw.println(nextLine);
+            }
+            return contents.toString();
+        } finally {
+            reader.close();
         }
-        return contents.toString();
 
     }
 

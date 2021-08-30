@@ -36,7 +36,7 @@ import org.broad.igv.event.GenomeChangeEvent;
 import org.broad.igv.event.IGVEventBus;
 import org.broad.igv.event.IGVEventObserver;
 import org.broad.igv.feature.genome.GenomeManager;
-import org.broad.igv.feature.genome.RemoveGenomesDialog;
+import org.broad.igv.feature.genome.GenomeUtils;
 import org.broad.igv.google.GoogleUtils;
 import org.broad.igv.google.OAuthProvider;
 import org.broad.igv.google.OAuthUtils;
@@ -47,6 +47,7 @@ import org.broad.igv.tools.motiffinder.MotifFinderPlugin;
 import org.broad.igv.track.CombinedDataSourceDialog;
 import org.broad.igv.ui.action.*;
 import org.broad.igv.ui.commandbar.GenomeComboBox;
+import org.broad.igv.ui.commandbar.RemoveGenomesDialog;
 import org.broad.igv.ui.legend.LegendDialog;
 import org.broad.igv.ui.panel.FrameManager;
 import org.broad.igv.ui.panel.MainPanel;
@@ -89,44 +90,26 @@ import static org.broad.igv.ui.UIConstants.*;
 public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
 
     private static Logger log = Logger.getLogger(IGVMenuBar.class);
-    public static final String GENOMESPACE_REG_TOOLTIP = "Register for GenomeSpace";
-    public static final String GENOMESPACE_REG_PAGE = "http://www.genomespace.org/register";
+    private static final String LOAD_GENOME_SERVER_TOOLTIP = "Select genomes available on the server to appear in menu.";
+    private static final String CANNOT_LOAD_GENOME_SERVER_TOOLTIP = "Could not reach genome server";
+
+    private static IGVMenuBar instance;
 
     private JMenu extrasMenu;
+    private JMenu toolsMenu;
+    private JMenu googleMenu;
+    private JMenu AWSMenu;
     private FilterTracksMenuAction filterTracksAction;
     private JMenu viewMenu;
-    IGV igv;
-
-    private JMenu toolsMenu;
-
+    private IGV igv;
     /**
      * We store this as a field because we alter it if
      * we can't access genome server list
      */
     private JMenuItem loadFromServerMenuItem;
-
-    private static final String LOAD_GENOME_SERVER_TOOLTIP = "Select genomes available on the server to appear in menu.";
-    private static final String CANNOT_LOAD_GENOME_SERVER_TOOLTIP = "Could not reach genome server";
-
-    private static IGVMenuBar instance;
-    private JMenu googleMenu;
-    private JMenu AWSMenu;
     private JMenuItem encodeMenuItem;
     private JMenuItem reloadSessionItem;
 
-    public void notifyGenomeServerReachable(boolean reachable) {
-        if (loadFromServerMenuItem != null) {
-            UIUtilities.invokeOnEventThread(() -> {
-                loadFromServerMenuItem.setEnabled(reachable);
-                String tooltip = reachable ? LOAD_GENOME_SERVER_TOOLTIP : CANNOT_LOAD_GENOME_SERVER_TOOLTIP;
-                loadFromServerMenuItem.setToolTipText(tooltip);
-            });
-        }
-    }
-
-    public void showAboutDialog() {
-        (new AboutDialog(IGV.getMainFrame(), true)).setVisible(true);
-    }
 
     static IGVMenuBar createInstance(IGV igv) {
         if (instance != null) {
@@ -162,6 +145,22 @@ public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
             DesktopIntegration.setQuitHandler();
         }
     }
+
+
+    public void notifyGenomeServerReachable(boolean reachable) {
+        if (loadFromServerMenuItem != null) {
+            UIUtilities.invokeOnEventThread(() -> {
+                loadFromServerMenuItem.setEnabled(reachable);
+                String tooltip = reachable ? LOAD_GENOME_SERVER_TOOLTIP : CANNOT_LOAD_GENOME_SERVER_TOOLTIP;
+                loadFromServerMenuItem.setToolTipText(tooltip);
+            });
+        }
+    }
+
+    public void showAboutDialog() {
+        (new AboutDialog(IGV.getMainFrame(), true)).setVisible(true);
+    }
+
 
     private List<AbstractButton> createMenus() {
 
@@ -213,9 +212,7 @@ public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
 
     /**
      * Generate the "tools" menu.
-     * This is imperative, it is written to field {@code toolsMenu}.
-     * Reason being, when we add (TODO remove)
-     * a new tool, we need to refresh just this menu
+     * Legacy pattern -- at one times tools could be loaded dynamically as plug-ins
      */
     void refreshToolsMenu() {
         List<JComponent> menuItems = new ArrayList<JComponent>(10);
@@ -237,7 +234,7 @@ public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
         menuItems.add(MotifFinderPlugin.getMenuItem());
 
         // BLAT
-        menuItems.add(BlatClient.getMenuItem());
+        menuItems.add(createBlatMenuItem());
 
         // Combine data tracks
         JMenuItem combineDataItem = new JMenuItem("Combine Data Tracks");
@@ -336,15 +333,27 @@ public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
         // ***** Snapshots
         // Snapshot Application
         menuAction =
-                new MenuAction("Save Image ...", null, KeyEvent.VK_A) {
+                new MenuAction("Save PNG Image ...", null, KeyEvent.VK_A) {
                     @Override
                     public void actionPerformed(ActionEvent e) {
-                        igv.saveImage(igv.getMainPanel());
+                        igv.saveImage(igv.getMainPanel(), "png");
 
                     }
                 };
 
-        menuAction.setToolTipText(SAVE_IMAGE_TOOLTIP);
+        menuAction.setToolTipText(SAVE_PNG_IMAGE_TOOLTIP);
+        menuItems.add(MenuAndToolbarUtils.createMenuItem(menuAction));
+
+        menuAction =
+                new MenuAction("Save SVG Image ...", null) {
+                    @Override
+                    public void actionPerformed(ActionEvent e) {
+                        igv.saveImage(igv.getMainPanel(), "svg");
+
+                    }
+                };
+
+        menuAction.setToolTipText(SAVE_SVG_IMAGE_TOOLTIP);
         menuItems.add(MenuAndToolbarUtils.createMenuItem(menuAction));
 
         // TODO -- change "Exit" to "Close" for BioClipse
@@ -422,16 +431,16 @@ public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
                     }
                 };
 
-        menuAction.setToolTipText("Load a FASTA or .genome file...");
+        menuAction.setToolTipText("Load a FASTA, .json, or .genome file...");
         menuItems.add(MenuAndToolbarUtils.createMenuItem(menuAction));
 
         // Load genome from URL
         menuAction = new LoadFromURLMenuAction(LoadFromURLMenuAction.LOAD_GENOME_FROM_URL, 0, igv);
-        menuAction.setToolTipText("Load a FASTA or .genome file...");
+        menuAction.setToolTipText("Load a FASTA, .json, or .genome file...");
         menuItems.add(MenuAndToolbarUtils.createMenuItem(menuAction));
 
-        // Add genome to combo box from server
-        menuAction = new MenuAction("Load Genome From Server...", null) {
+        // Download genome from server 
+        menuAction = new MenuAction("Select Hosted Genome...", null) {
             @Override
             public void actionPerformed(ActionEvent event) {
                 GenomeComboBox.loadGenomeFromServer();
@@ -441,11 +450,10 @@ public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
         loadFromServerMenuItem = MenuAndToolbarUtils.createMenuItem(menuAction);
         menuItems.add(loadFromServerMenuItem);
 
-
         menuItems.add(new JSeparator());
 
         // Add genome to combo box from server
-        menuAction = new MenuAction("Remove genomes ...", null) {
+        menuAction = new MenuAction("Remove Genomes...", null) {
             @Override
             public void actionPerformed(ActionEvent event) {
                 RemoveGenomesDialog dialog2 = new RemoveGenomesDialog(IGV.getMainFrame());
@@ -455,21 +463,21 @@ public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
         menuAction.setToolTipText("Remove genomes which appear in the dropdown list");
         menuItems.add(MenuAndToolbarUtils.createMenuItem(menuAction));
 
-
-        menuItems.add(new JSeparator());
-
-        menuAction =
-                new MenuAction("Create .genome File...", null, KeyEvent.VK_D) {
-                    @Override
-                    public void actionPerformed(ActionEvent event) {
-                        javax.swing.ProgressMonitor monitor = new javax.swing.ProgressMonitor(IGV.getInstance().getMainPanel(),
-                                "Creating genome", null, 0, 100);
-                        igv.defineGenome(monitor);
-                    }
-                };
-
-        menuAction.setToolTipText(UIConstants.IMPORT_GENOME_TOOLTIP);
-        menuItems.add(MenuAndToolbarUtils.createMenuItem(menuAction));
+//
+//        menuItems.add(new JSeparator());
+//
+//        menuAction =
+//                new MenuAction("Create .genome File...", null, KeyEvent.VK_D) {
+//                    @Override
+//                    public void actionPerformed(ActionEvent event) {
+//                        javax.swing.ProgressMonitor monitor = new javax.swing.ProgressMonitor(IGV.getInstance().getMainPanel(),
+//                                "Creating genome", null, 0, 100);
+//                        igv.defineGenome(monitor);
+//                    }
+//                };
+//
+//        menuAction.setToolTipText(UIConstants.IMPORT_GENOME_TOOLTIP);
+//        menuItems.add(MenuAndToolbarUtils.createMenuItem(menuAction));
 
         MenuAction genomeMenuAction = new MenuAction("Genomes", null);
         return MenuAndToolbarUtils.createMenu(menuItems, genomeMenuAction);
@@ -570,7 +578,6 @@ public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
                 } else {
                     IGV.getInstance().getMainPanel().collapseNamePanel();
                 }
-                IGV.getInstance().repaint();
             }
         };
         boolean isShowing = IGV.getInstance().getMainPanel().isExpanded();
@@ -611,8 +618,7 @@ public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
 
                 JCheckBoxMenuItem menuItem = (JCheckBoxMenuItem) e.getSource();
                 PreferencesManager.getPreferences().setShowAttributeView(menuItem.getState());
-                IGV.getInstance().getMainPanel().invalidate();
-                IGV.getInstance().repaint();
+                IGV.getInstance().getMainPanel().revalidateTrackPanels();
             }
         };
         menuItem = MenuAndToolbarUtils.createMenuItem(menuAction, isShow);
@@ -640,7 +646,7 @@ public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
                 } else {
                     IGV.getInstance().getMainPanel().removeHeader();
                 }
-                IGV.getInstance().repaint();
+                IGV.getInstance().getMainPanel().revalidate();
             }
         };
         menuItems.add(MenuAndToolbarUtils.createMenuItem(menuAction, true));
@@ -882,11 +888,23 @@ public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
 
         // Save entire window
         menuAction =
-                new MenuAction("Save Screenshot ...", null, KeyEvent.VK_A) {
+                new MenuAction("Save PNG Screenshot ...", null, KeyEvent.VK_A) {
 
                     @Override
                     public void actionPerformed(ActionEvent e) {
-                        IGV.getInstance().saveImage(IGV.getInstance().getContentPane());
+                        IGV.getInstance().saveImage(IGV.getInstance().getContentPane(), "png");
+
+                    }
+                };
+
+        menuItems.add(MenuAndToolbarUtils.createMenuItem(menuAction));
+
+        menuAction =
+                new MenuAction("Save SVG Screenshot ...", null) {
+
+                    @Override
+                    public void actionPerformed(ActionEvent e) {
+                        IGV.getInstance().saveImage(IGV.getInstance().getContentPane(), "svg");
 
                     }
                 };
@@ -943,9 +961,17 @@ public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
         }
         menu.add(lfMenu);
 
+        JMenuItem updateCS = new JMenuItem("Update chrom sizes");
+        updateCS.addActionListener(e -> {
+            try {
+                GenomeUtils.main(new String [] {});
+            } catch (IOException ioException) {
+                ioException.printStackTrace();
+            }
+        });
+        menu.add(updateCS);
+
         menu.setVisible(false);
-
-
         return menu;
     }
 
@@ -1139,10 +1165,6 @@ public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
         return false;
     }
 
-    public JMenu getViewMenu() {
-        return viewMenu;
-    }
-
     final public void doExitApplication() {
 
         try {
@@ -1184,5 +1206,22 @@ public class IGVMenuBar extends JMenuBar implements IGVEventObserver {
 
     public void disableReloadSession() {
         this.reloadSessionItem.setEnabled(false);
+    }
+
+    public static JMenuItem createBlatMenuItem() {
+        JMenuItem menuItem = new JMenuItem("BLAT ...");
+        menuItem.addActionListener(e -> {
+
+            String blatSequence = MessageUtils.showInputDialog("Enter sequence to blat:");
+            if (blatSequence != null) {
+                if(blatSequence.length() < 20 || blatSequence.length() > 8000) {
+                    MessageUtils.showMessage("BLAT sequences must be between 20 and 8000 bases in length.");
+                } else {
+                    BlatClient.doBlatQuery(blatSequence, "BLAT");
+                }
+            }
+        });
+
+        return menuItem;
     }
 }
