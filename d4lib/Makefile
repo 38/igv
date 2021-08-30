@@ -19,7 +19,7 @@ $(JNILIB): D4FileParser.cpp D4FileParser.h $(D4BINDING)
 		-fPIC \
 		-O3 \
 		-I . -I /usr/lib/jvm/java-11-openjdk-amd64/include -I /usr/lib/jvm/java-11-openjdk-amd64/include/linux/ \
-		$^ \
+		$< \
 		-L. -ld4binding
 d4-igv-test: D4FileParser.cpp 
 	$(CC) -o $@ \
