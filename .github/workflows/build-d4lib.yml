@@ -33,5 +33,5 @@ jobs:
       run: mv build/IGV-dist/ .
     - uses: actions/upload-artifact@v2
       with:
-        name: IGV-D4
+        name: IGV-D4-${{ matrix.os }}
         path: IGV-dist/
