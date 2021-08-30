@@ -1,17 +1,19 @@
 UNAME_S := $(shell uname -s || echo Darwin)
 ifeq ($(UNAME_S),Linux)
 	D4BINDING = libd4binding.so
+	JNILIB = libd4-igv.so
 endif
 ifeq ($(UNAME_S),Darwin)
 	D4BINDING = libd4binding.dylib
+	JNILIB = libd4-igv.dylib
 endif
 
-all: libd4-igv.so d4-igv-test
+all: $(JNILIB) d4-igv-test
 $(D4BINDING):
 	cd d4-format && \
 		cargo build --package=d4binding --release && \
 		ln target/release/$@ ../
-libd4-igv.so: D4FileParser.cpp D4FileParser.h libd4binding.so
+$(JNILIB): D4FileParser.cpp D4FileParser.h $(D4BINDING)
 	$(CC) -o $@ \
 		--shared  \
 		-fPIC \
