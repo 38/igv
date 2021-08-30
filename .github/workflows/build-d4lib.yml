@@ -31,4 +31,4 @@ jobs:
     - uses: actions/upload-artifact@v2
       with:
         name: igv-d4.tar.gz
-        path: igv-d4.tar.gz
+        path: build/igv-d4.tar.gz
