@@ -12,7 +12,7 @@ env:
 jobs:
   build:
 
-    runs-on:  macos-latest
+    runs-on:  [macos-latest, ubuntu-latest]
 
     steps:
     - uses: actions/setup-java@v2
@@ -26,9 +26,9 @@ jobs:
       run: cd d4lib && make
     - name: Build Java
       run: ./gradlew createDist
-    - name: Pack Artifact
-      run: cd build/ && tar czvf igv-d4.tar.gz IGV-dist/
+    - name: Prepare Artifact
+      run: mv build/IGV-dist/ .
     - uses: actions/upload-artifact@v2
       with:
-        name: igv-d4.tar.gz
-        path: build/igv-d4.tar.gz
+        name: IGV-D4
+        path: IGV-dist/
