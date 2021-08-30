@@ -1,4 +1,4 @@
-UNAME_S := $(shell uname -s)
+UNAME_S := $(shell uname -s || echo Darwin)
 ifeq ($(UNAME_S),Linux)
 	D4BINDING = libd4binding.so
 endif
