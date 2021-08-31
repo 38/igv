@@ -6,6 +6,28 @@
 
 Integrative Genomics Viewer - desktop genome visualization tool for Mac, Windows, and Linux.
 
+** This is the demo integration of D4 into IGV, please follow the link to get D4 enable for IGV **
+
+### Build with D4 Support
+
+- Install JDK from [https://www.oracle.com/java/technologies/javase-jdk16-downloads.html](https://www.oracle.com/java/technologies/javase-jdk16-downloads.html)
+- Install Rust from [https://rustup.rs](https://rustup.rs)
+- Build D4 Code
+```bash
+git clone https://github.com/38/igv --recursive
+cd igv/d4lib
+make
+cd ..
+./gradle createDist
+```
+- Run the IGV with D4 support
+```bash
+build/IGV-dist/igv.sh
+```
+- Download sample D4 file from: [https://home.chpc.utah.edu/~u0875014/RNAseq_deflated.d4](https://home.chpc.utah.edu/~u0875014/RNAseq_deflated.d4)
+
+- Open the downloaded sample file
+
 ### Building
 
 These instructions are meant for developers interested in working on the IGV code.  For normal use,
