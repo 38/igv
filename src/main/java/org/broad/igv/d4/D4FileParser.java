@@ -198,6 +198,12 @@ public class D4FileParser extends AbstractDataSource {
 
 
     static {
-        System.loadLibrary("d4-igv");
+		try {
+			System.err.println("Loading D4 binary");
+        	System.loadLibrary("d4-igv");
+			System.err.println("libd4igv.so has been loaded");
+		} catch (Exception e) {
+			System.err.println("JNI loaded exception: " + e.toString());
+		}
     }
 }

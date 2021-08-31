@@ -1,4 +1,10 @@
 #!/bin/sh
+
+if [ -e /usr/libexec/java_home ] 
+then
+	exec /usr/libexec/java_home
+fi
+
 TARGET_FILE=`which java`
 
 cd `dirname $TARGET_FILE`
